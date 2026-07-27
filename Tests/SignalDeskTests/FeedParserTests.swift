@@ -73,4 +73,26 @@ struct FeedParserTests {
         #expect(MediaClassifier.matchesPerson(title: "Exclusive interview with Satya Nadella", aliases: ["Satya Nadella"]))
         #expect(!MediaClassifier.matchesPerson(title: "Bill Gates keynote at AI Summit", aliases: ["Yann LeCun"]))
     }
+
+    @Test func classifiesCanonicalDomainsWithoutGenericTechnologyBucket() {
+        let domains = SignalDomainClassifier.classify(
+            text: "A foundation model agent runs on GPUs and controls a humanoid robot after new funding"
+        )
+
+        #expect(domains.contains(.modelsAgents))
+        #expect(domains.contains(.robotics))
+        #expect(domains.contains(.compute))
+        #expect(domains.contains(.investmentBusiness))
+        #expect(SignalDomainClassifier.classify(text: "A general technology keynote").isEmpty)
+        #expect(
+            SignalDomainClassifier.classify(text: "Quarterly 13F filing", kind: .sec13F)
+                == [.investmentBusiness]
+        )
+        #expect(
+            SignalDomainClassifier.classify(
+                text: "A conversation with Fei-Fei Li",
+                fallbackDomains: [.robotics]
+            ).contains(.robotics)
+        )
+    }
 }

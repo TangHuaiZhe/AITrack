@@ -8,7 +8,7 @@ struct ContentView: View {
     @State private var showingAddSource = false
     @State private var query = ""
     @State private var category: SignalCategory?
-    @State private var selectedTopic: String?
+    @State private var selectedTopic: SignalDomain?
 
     var body: some View {
         NavigationSplitView {
@@ -67,10 +67,9 @@ struct ContentView: View {
             }
 
             Section("主题") {
-                topicRow("AI", color: .purple)
-                topicRow("机器人", color: .cyan)
-                topicRow("科技", color: .blue)
-                topicRow("投资", color: .green)
+                ForEach(SignalDomain.allCases) { domain in
+                    topicRow(domain)
+                }
             }
         }
         .navigationSplitViewColumnWidth(min: 210, ideal: 235, max: 280)
@@ -141,7 +140,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(selectedTopic.map { "\($0) 主题" } ?? section?.title ?? "情报流")
+                    Text(selectedTopic.map { "\($0.title)主题" } ?? section?.title ?? "情报流")
                         .font(.largeTitle.weight(.bold))
                     Text(refreshSubtitle)
                         .font(.caption)
@@ -152,7 +151,7 @@ struct ContentView: View {
                         self.selectedTopic = nil
                         selection = nil
                     } label: {
-                        Label("清除 \(selectedTopic) 筛选", systemImage: "xmark")
+                        Label("清除 \(selectedTopic.title)筛选", systemImage: "xmark")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -227,7 +226,7 @@ struct ContentView: View {
             default: sectionMatches = true
             }
             let categoryMatches = category == nil || event.category == category
-            let topicMatches = selectedTopic.map(event.matchedTopics.contains) ?? true
+            let topicMatches = selectedTopic.map { event.domains?.contains($0) == true } ?? true
             let queryMatches = query.isEmpty ||
                 "\(event.sourceName) \(event.title) \(event.summary) \(event.matchedTopics.joined(separator: " "))"
                 .localizedCaseInsensitiveContains(query)
@@ -252,29 +251,40 @@ struct ContentView: View {
         }
     }
 
-    private func topicRow(_ title: String, color: Color) -> some View {
+    private func topicRow(_ domain: SignalDomain) -> some View {
         Button {
-            selectedTopic = selectedTopic == title ? nil : title
+            selectedTopic = selectedTopic == domain ? nil : domain
             section = .inbox
             selection = nil
         } label: {
             HStack {
-                Circle().fill(color).frame(width: 7, height: 7)
-                Text(title)
+                Circle().fill(topicColor(domain)).frame(width: 7, height: 7)
+                Text(domain.title)
                 Spacer()
-                Text("\(store.events.filter { $0.matchedTopics.contains(title) }.count)")
+                Text("\(store.events.filter { $0.domains?.contains(domain) == true }.count)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
-                if selectedTopic == title {
+                if selectedTopic == domain {
                     Image(systemName: "checkmark")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(color)
+                        .foregroundStyle(topicColor(domain))
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .listRowBackground(selectedTopic == title ? color.opacity(0.12) : Color.clear)
+        .listRowBackground(
+            selectedTopic == domain ? topicColor(domain).opacity(0.12) : Color.clear
+        )
+    }
+
+    private func topicColor(_ domain: SignalDomain) -> Color {
+        switch domain {
+        case .modelsAgents: .purple
+        case .robotics: .cyan
+        case .compute: .blue
+        case .investmentBusiness: .green
+        }
     }
 }
 

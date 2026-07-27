@@ -232,7 +232,8 @@ struct SEC13FClient {
                 publishedAt: date,
                 category: .holding,
                 importance: 94,
-                matchedTopics: ["13F", "持仓"]
+                matchedTopics: ["13F", "持仓"],
+                domains: [.investmentBusiness]
             )
         ]
         events += changes.prefix(80).map { change in
@@ -246,7 +247,8 @@ struct SEC13FClient {
                 publishedAt: date,
                 category: .holding,
                 importance: importance(change),
-                matchedTopics: ["13F", "持仓", change.kind.title]
+                matchedTopics: ["13F", "持仓", change.kind.title],
+                domains: [.investmentBusiness]
             )
         }
         return events

@@ -53,6 +53,24 @@ enum SignalCategory: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum SignalDomain: String, Codable, CaseIterable, Identifiable {
+    case modelsAgents
+    case robotics
+    case compute
+    case investmentBusiness
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .modelsAgents: "模型与 Agent"
+        case .robotics: "机器人与具身智能"
+        case .compute: "算力与芯片"
+        case .investmentBusiness: "投资与商业"
+        }
+    }
+}
+
 struct TrackedSource: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -84,6 +102,7 @@ struct SignalEvent: Identifiable, Codable, Hashable {
     var category: SignalCategory
     var importance: Int
     var matchedTopics: [String]
+    var domains: [SignalDomain]? = nil
     var isRead = false
     var isBookmarked = false
     var aiSummary: AISummary?

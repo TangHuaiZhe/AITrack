@@ -90,7 +90,12 @@ struct FeedClient {
                 publishedAt: item.publishedAt,
                 category: category,
                 importance: score,
-                matchedTopics: matched
+                matchedTopics: matched,
+                domains: SignalDomainClassifier.classify(
+                    text: text,
+                    fallbackDomains: PersonPreset.defaultDomains(for: source),
+                    kind: source.sourceKind
+                )
             )
         }
     }
@@ -158,6 +163,64 @@ enum ImportanceScorer {
         let lowered = text.lowercased()
         if conviction.contains(where: lowered.contains) { return .viewpoint }
         return .activity
+    }
+}
+
+enum SignalDomainClassifier {
+    private static let terms: [SignalDomain: [String]] = [
+        .modelsAgents: [
+            "agi", "llm", "language model", "foundation model", "world model",
+            "agent", "agents", "agentic", "copilot", "reasoning", "alignment",
+            "ai safety", "artificial intelligence", "machine intelligence",
+            "powerful ai", "model training", "模型", "大模型", "智能体",
+            "世界模型", "推理模型", "对齐", "ai 安全"
+        ],
+        .robotics: [
+            "robot", "robots", "robotics", "humanoid", "embodied ai",
+            "physical ai", "optimus", "unitree", "vla", "gr00t",
+            "autonomous driving", "self-driving", "fsd", "spatial intelligence",
+            "机器人", "人形机器人", "具身智能", "物理智能", "自动驾驶", "空间智能"
+        ],
+        .compute: [
+            "gpu", "gpus", "chip", "chips", "semiconductor", "accelerator",
+            "inference", "compute", "computing", "data center", "datacenter",
+            "ai factory", "mi300", "mi400", "yottaflops", "infrastructure",
+            "算力", "芯片", "半导体", "推理成本", "数据中心", "ai 工厂", "基础设施"
+        ],
+        .investmentBusiness: [
+            "13f", "holding", "holdings", "portfolio", "stake", "shares",
+            "investment", "investing", "funding", "fundraise", "acquisition",
+            "acquire", "valuation", "revenue", "monetization", "business model",
+            "enterprise", "productivity", "workflow", "capex", "capital expenditure",
+            "持仓", "增持", "减持", "清仓", "投资", "融资", "收购", "估值",
+            "营收", "商业模式", "企业", "生产率", "工作流", "资本开支"
+        ]
+    ]
+
+    static func classify(
+        text: String,
+        fallbackDomains: [SignalDomain] = [],
+        kind: SourceKind? = nil
+    ) -> [SignalDomain] {
+        let lowered = text.lowercased()
+        let direct = SignalDomain.allCases.filter { domain in
+            if domain == .investmentBusiness, kind == .sec13F { return true }
+            return terms[domain, default: []].contains { contains($0, in: lowered) }
+        }
+        return direct.isEmpty ? fallbackDomains : direct
+    }
+
+    private static func contains(_ term: String, in text: String) -> Bool {
+        let loweredTerm = term.lowercased()
+        guard loweredTerm.unicodeScalars.allSatisfy(\.isASCII),
+              !loweredTerm.contains(" ") else {
+            return text.contains(loweredTerm)
+        }
+        let escaped = NSRegularExpression.escapedPattern(for: loweredTerm)
+        return text.range(
+            of: "(?<![a-z0-9])\(escaped)(?![a-z0-9])",
+            options: .regularExpression
+        ) != nil
     }
 }
 

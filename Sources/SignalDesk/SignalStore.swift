@@ -14,11 +14,13 @@ final class SignalStore: ObservableObject {
     private let stateURL: URL
     private var installedCatalogIDs = Set<String>()
     private static let requestedPeopleCatalogID = "ai-robotics-longform-v4"
+    private static let domainTaxonomyID = "signal-domains-v3"
 
     init(stateURL: URL? = nil) {
         self.stateURL = stateURL ?? Self.defaultStateURL
         load()
         installRequestedPeopleIfNeeded()
+        installDomainTaxonomyIfNeeded()
     }
 
     var unreadCount: Int { events.filter { !$0.isRead }.count }
@@ -206,7 +208,8 @@ final class SignalStore: ObservableObject {
                 publishedAt: Date(),
                 category: .activity,
                 importance: 92,
-                matchedTopics: ["AI", "投资"]
+                matchedTopics: ["AI", "投资"],
+                domains: []
             )
         ]
     }
@@ -238,6 +241,22 @@ final class SignalStore: ObservableObject {
 
     private static func sourceKey(_ source: TrackedSource) -> String {
         "\(source.sourceKind.rawValue)|\(source.feedURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
+    private func installDomainTaxonomyIfNeeded() {
+        guard installedCatalogIDs.insert(Self.domainTaxonomyID).inserted else { return }
+        let sourcesByID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
+        for index in events.indices {
+            let event = events[index]
+            let source = sourcesByID[event.sourceID]
+            let text = "\(event.title) \(event.summary)"
+            events[index].domains = SignalDomainClassifier.classify(
+                text: text,
+                fallbackDomains: source.map(PersonPreset.defaultDomains) ?? [],
+                kind: source?.sourceKind
+            )
+        }
+        save()
     }
 }
 

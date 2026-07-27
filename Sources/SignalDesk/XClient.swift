@@ -59,7 +59,12 @@ struct XClient {
                 publishedAt: post.createdAt ?? Date(),
                 category: .viewpoint,
                 importance: min(base + engagement, 100),
-                matchedTopics: ImportanceScorer.matchedTopics(in: post.text, topics: source.topics)
+                matchedTopics: ImportanceScorer.matchedTopics(in: post.text, topics: source.topics),
+                domains: SignalDomainClassifier.classify(
+                    text: post.text,
+                    fallbackDomains: PersonPreset.defaultDomains(for: source),
+                    kind: .x
+                )
             )
         }
     }
