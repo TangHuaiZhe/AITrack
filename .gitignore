@@ -1,0 +1,17 @@
+# Swift build products
+.build/
+dist/
+.swiftpm/
+
+# macOS / Xcode local state
+.DS_Store
+xcuserdata/
+*.xcuserstate
+
+# Local configuration and credentials
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.mobileprovision

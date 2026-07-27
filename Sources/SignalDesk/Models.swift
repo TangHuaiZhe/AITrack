@@ -1,0 +1,214 @@
+import Foundation
+
+enum SourceKind: String, Codable, CaseIterable, Identifiable {
+    case rss
+    case sec13F
+    case x
+    case mediaSearch
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .rss: "RSS / Atom"
+        case .sec13F: "SEC 13F"
+        case .x: "X 官方 API"
+        case .mediaSearch: "采访 / 播客 / 视频"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .rss: "dot.radiowaves.left.and.right"
+        case .sec13F: "building.columns"
+        case .x: "at"
+        case .mediaSearch: "mic.and.signal.meter.fill"
+        }
+    }
+
+    static let userAddableCases: [SourceKind] = [.rss, .sec13F, .x]
+}
+
+enum SignalCategory: String, Codable, CaseIterable, Identifiable {
+    case viewpoint
+    case activity
+    case holding
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .viewpoint: "观点"
+        case .activity: "动向"
+        case .holding: "持仓"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .viewpoint: "quote.bubble.fill"
+        case .activity: "bolt.fill"
+        case .holding: "chart.pie.fill"
+        }
+    }
+}
+
+struct TrackedSource: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String
+    var role: String
+    var topics: [String]
+    var sourceKind: SourceKind
+    var feedURL: String
+    var requiredTitleTerms: [String]? = nil
+    var isEnabled = true
+    var lastCheckedAt: Date?
+
+    var initials: String {
+        let words = name.split(separator: " ")
+        if words.count > 1 {
+            return words.prefix(2).compactMap(\.first).map(String.init).joined()
+        }
+        return String(name.prefix(2))
+    }
+}
+
+struct SignalEvent: Identifiable, Codable, Hashable {
+    var id: String
+    var sourceID: UUID
+    var sourceName: String
+    var title: String
+    var summary: String
+    var url: String?
+    var publishedAt: Date
+    var category: SignalCategory
+    var importance: Int
+    var matchedTopics: [String]
+    var isRead = false
+    var isBookmarked = false
+    var aiSummary: AISummary?
+}
+
+struct AISummary: Codable, Hashable {
+    var content: String
+    var provider: AISummaryProvider
+    var generatedAt: Date
+}
+
+enum AISummaryProvider: String, Codable, CaseIterable, Identifiable {
+    case appleOnDevice
+    case ollama
+    case deepSeek
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .appleOnDevice: "Apple 本机模型"
+        case .ollama: "Ollama 本地模型"
+        case .deepSeek: "DeepSeek API"
+        }
+    }
+}
+
+enum AISummaryMode: String, CaseIterable, Identifiable {
+    case localFirst
+    case ollama
+    case deepSeek
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .localFirst: "本机优先（免费）"
+        case .ollama: "Ollama（免费）"
+        case .deepSeek: "DeepSeek"
+        }
+    }
+}
+
+struct AppSnapshot: Codable {
+    var sources: [TrackedSource]
+    var events: [SignalEvent]
+    var lastRefreshAt: Date?
+    var installedCatalogIDs: [String]? = nil
+}
+
+enum AppSection: String, CaseIterable, Identifiable {
+    case inbox
+    case highValue
+    case bookmarks
+    case sources
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .inbox: "情报流"
+        case .highValue: "高价值"
+        case .bookmarks: "已收藏"
+        case .sources: "监控对象"
+        case .settings: "设置"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .inbox: "rectangle.stack.fill"
+        case .highValue: "sparkles"
+        case .bookmarks: "bookmark.fill"
+        case .sources: "person.2.fill"
+        case .settings: "gearshape.fill"
+        }
+    }
+}
+
+extension TrackedSource {
+    static let starterSources = [
+        TrackedSource(
+            name: "Sam Altman / OpenAI",
+            role: "AI · 官方动态",
+            topics: ["AI", "模型", "Agent", "算力"],
+            sourceKind: .rss,
+            feedURL: "https://openai.com/news/rss.xml"
+        ),
+        TrackedSource(
+            name: "Jensen Huang / NVIDIA",
+            role: "AI 芯片 · 机器人",
+            topics: ["GPU", "机器人", "AI", "数据中心"],
+            sourceKind: .rss,
+            feedURL: "https://nvidianews.nvidia.com/cats/robotics.xml"
+        )
+    ]
+
+    static func sec13F(name: String, role: String, cik: String) -> TrackedSource {
+        let digits = cik.filter(\.isNumber)
+        let url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=\(digits)&type=13F-HR&owner=exclude&count=40&output=atom"
+        return TrackedSource(
+            name: name,
+            role: role,
+            topics: ["13F", "持仓", "投资"],
+            sourceKind: .sec13F,
+            feedURL: url
+        )
+    }
+
+    static func x(
+        name: String,
+        role: String,
+        username: String,
+        topics: [String],
+        isEnabled: Bool = true
+    ) -> TrackedSource {
+        var source = TrackedSource(
+            name: name,
+            role: role,
+            topics: topics,
+            sourceKind: .x,
+            feedURL: username.trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        )
+        source.isEnabled = isEnabled
+        return source
+    }
+}

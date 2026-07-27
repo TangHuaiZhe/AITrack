@@ -1,0 +1,76 @@
+import Foundation
+import Testing
+@testable import SignalDesk
+
+struct FeedParserTests {
+    @Test func parsesRSS() throws {
+        let xml = """
+        <rss version="2.0"><channel><item>
+        <title>Robotics model launch</title>
+        <description><![CDATA[New <b>AI</b> system]]></description>
+        <link>https://example.com/one</link>
+        <pubDate>Sun, 27 Jul 2026 10:00:00 +0800</pubDate>
+        </item></channel></rss>
+        """
+
+        let items = try FeedParser.parse(data: Data(xml.utf8))
+
+        #expect(items.count == 1)
+        #expect(items[0].title == "Robotics model launch")
+        #expect(items[0].summary == "New AI system")
+        #expect(items[0].link == "https://example.com/one")
+    }
+
+    @Test func parsesAtomLinkAttribute() throws {
+        let xml = """
+        <feed xmlns="http://www.w3.org/2005/Atom"><entry>
+        <title>13F-HR filing</title>
+        <summary>Quarterly holdings report</summary>
+        <link rel="alternate" href="https://example.com/filing"/>
+        <updated>2026-07-27T12:00:00Z</updated>
+        </entry></feed>
+        """
+
+        let items = try FeedParser.parse(data: Data(xml.utf8))
+
+        #expect(items.count == 1)
+        #expect(items[0].link == "https://example.com/filing")
+    }
+
+    @Test func scoringRewardsTopicsAndHoldings() {
+        let regular = ImportanceScorer.score(
+            text: "New product update",
+            topics: ["robotics"],
+            kind: .rss
+        )
+        let relevant = ImportanceScorer.score(
+            text: "AI robotics model launch and investment",
+            topics: ["AI", "robotics"],
+            kind: .rss
+        )
+        let holding = ImportanceScorer.score(
+            text: "13F quarterly holdings",
+            topics: ["13F"],
+            kind: .sec13F
+        )
+
+        #expect(relevant > regular)
+        #expect(holding >= 75)
+        #expect(ImportanceScorer.category(text: "filing", kind: .sec13F) == .holding)
+    }
+
+    @Test func shortTopicUsesWordBoundaries() {
+        #expect(ImportanceScorer.matchedTopics(in: "AI model", topics: ["AI"]) == ["AI"])
+        #expect(ImportanceScorer.matchedTopics(in: "The speaker said hello", topics: ["AI"]).isEmpty)
+    }
+
+    @Test func mediaClassifierRejectsOrdinaryNews() {
+        #expect(MediaClassifier.isLongForm(title: "Exclusive interview with Satya Nadella"))
+        #expect(MediaClassifier.isLongForm(title: "黄仁勋最新访谈：AI 工厂的未来"))
+        #expect(MediaClassifier.isLongForm(title: "Dario Amodei on the Dwarkesh Podcast"))
+        #expect(!MediaClassifier.isLongForm(title: "Elon Musk drops a five-year prediction"))
+        #expect(!MediaClassifier.isLongForm(title: "AMD announces a new AI chip"))
+        #expect(MediaClassifier.matchesPerson(title: "Exclusive interview with Satya Nadella", aliases: ["Satya Nadella"]))
+        #expect(!MediaClassifier.matchesPerson(title: "Bill Gates keynote at AI Summit", aliases: ["Yann LeCun"]))
+    }
+}

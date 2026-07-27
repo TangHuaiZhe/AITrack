@@ -1,0 +1,292 @@
+import Foundation
+
+struct ParsedFeedItem: Equatable {
+    var title: String
+    var summary: String
+    var link: String?
+    var publishedAt: Date
+}
+
+enum FeedError: LocalizedError {
+    case invalidURL
+    case invalidResponse
+    case http(Int)
+    case invalidFeed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL: "来源地址无效"
+        case .invalidResponse: "服务器响应无效"
+        case .http(let code): "服务器返回 HTTP \(code)"
+        case .invalidFeed: "无法解析 RSS / Atom 内容"
+        }
+    }
+}
+
+struct FeedClient {
+    func fetch(_ source: TrackedSource) async throws -> [SignalEvent] {
+        switch source.sourceKind {
+        case .rss, .mediaSearch:
+            return try await fetchFeed(source)
+        case .sec13F:
+            return try await SEC13FClient().fetch(source)
+        case .x:
+            return try await XClient().fetch(source)
+        }
+    }
+
+    private func fetchFeed(_ source: TrackedSource) async throws -> [SignalEvent] {
+        guard let url = URL(string: source.feedURL) else {
+            throw FeedError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue(
+            "SignalDesk/0.1 contact=local-user@signalsdesk.app",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("application/atom+xml, application/rss+xml, application/xml, text/xml", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw FeedError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw FeedError.http(http.statusCode)
+        }
+
+        let itemLimit = source.sourceKind == .mediaSearch ? 25 : 150
+        var parsedItems = try FeedParser.parse(
+            data: data,
+            allowEmpty: source.sourceKind == .mediaSearch
+        )
+        if source.sourceKind == .mediaSearch {
+            parsedItems = parsedItems.filter {
+                MediaClassifier.isLongForm(title: $0.title) &&
+                MediaClassifier.matchesPerson(
+                    title: $0.title,
+                    aliases: source.requiredTitleTerms ?? []
+                )
+            }
+        }
+        let items = parsedItems
+            .sorted { $0.publishedAt > $1.publishedAt }
+            .prefix(itemLimit)
+        return items.map { item in
+            let text = "\(item.title) \(item.summary)"
+            let score = ImportanceScorer.score(text: text, topics: source.topics, kind: source.sourceKind)
+            let category = ImportanceScorer.category(text: text, kind: source.sourceKind)
+            let matched = ImportanceScorer.matchedTopics(in: text, topics: source.topics)
+            let identity = item.link ?? "\(item.title)|\(item.publishedAt.timeIntervalSince1970)"
+
+            return SignalEvent(
+                id: "\(source.id.uuidString)|\(identity)",
+                sourceID: source.id,
+                sourceName: source.name,
+                title: item.title,
+                summary: item.summary,
+                url: item.link,
+                publishedAt: item.publishedAt,
+                category: category,
+                importance: score,
+                matchedTopics: matched
+            )
+        }
+    }
+}
+
+enum MediaClassifier {
+    private static let markers = [
+        "interview", "podcast", "keynote", "conversation", "fireside",
+        "q&a", "qa with", "talks with", "in conversation",
+        "访谈", "专访", "采访", "对话", "播客", "演讲", "圆桌", "问答"
+    ]
+
+    static func isLongForm(title: String) -> Bool {
+        let lowered = title.lowercased()
+        return markers.contains { lowered.contains($0) }
+    }
+
+    static func matchesPerson(title: String, aliases: [String]) -> Bool {
+        guard !aliases.isEmpty else { return true }
+        return aliases.contains { title.localizedCaseInsensitiveContains($0) }
+    }
+}
+
+enum ImportanceScorer {
+    private static let highImpact = [
+        "launch", "release", "acquire", "investment", "funding", "partnership",
+        "breakthrough", "robot", "agent", "model", "chip", "gpu", "13f",
+        "发布", "推出", "收购", "投资", "融资", "合作", "突破", "机器人",
+        "智能体", "模型", "芯片", "算力", "持仓"
+    ]
+    private static let conviction = [
+        "believe", "predict", "expect", "future", "strategy", "thesis",
+        "认为", "预测", "预计", "未来", "战略", "判断"
+    ]
+
+    static func score(text: String, topics: [String], kind: SourceKind) -> Int {
+        let lowered = text.lowercased()
+        var value: Int
+        switch kind {
+        case .sec13F: value = 70
+        case .mediaSearch: value = 52
+        default: value = 38
+        }
+        value += min(matchedTopics(in: text, topics: topics).count * 9, 27)
+        value += min(highImpact.filter { lowered.contains($0) }.count * 5, 25)
+        value += min(conviction.filter { lowered.contains($0) }.count * 4, 12)
+        return min(value, 100)
+    }
+
+    static func matchedTopics(in text: String, topics: [String]) -> [String] {
+        let lowered = text.lowercased()
+        return topics.filter { topic in
+            let term = topic.lowercased()
+            guard term.count <= 3, term.unicodeScalars.allSatisfy(\.isASCII) else {
+                return lowered.contains(term)
+            }
+            let escaped = NSRegularExpression.escapedPattern(for: term)
+            return lowered.range(of: "(?<![a-z0-9])\(escaped)(?![a-z0-9])", options: .regularExpression) != nil
+        }
+    }
+
+    static func category(text: String, kind: SourceKind) -> SignalCategory {
+        if kind == .sec13F { return .holding }
+        if kind == .mediaSearch { return .viewpoint }
+        let lowered = text.lowercased()
+        if conviction.contains(where: lowered.contains) { return .viewpoint }
+        return .activity
+    }
+}
+
+enum FeedParser {
+    static func parse(data: Data, allowEmpty: Bool = false) throws -> [ParsedFeedItem] {
+        let delegate = FeedXMLDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse(), allowEmpty || !delegate.items.isEmpty else {
+            throw parser.parserError ?? FeedError.invalidFeed
+        }
+        return delegate.items
+    }
+}
+
+private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
+    private var currentElement = ""
+    private var currentText = ""
+    private var current: Draft?
+    private var isEntry = false
+    var items: [ParsedFeedItem] = []
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        let element = normalized(elementName)
+        currentElement = element
+        currentText = ""
+
+        if element == "item" || element == "entry" {
+            current = Draft()
+            isEntry = element == "entry"
+        }
+        if isEntry, element == "link", let href = attributeDict["href"], current?.link == nil {
+            current?.link = href
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        currentText += string
+    }
+
+    func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+        if let value = String(data: CDATABlock, encoding: .utf8) {
+            currentText += value
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        let element = normalized(elementName)
+        let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard current != nil else { return }
+        switch element {
+        case "title":
+            if current?.title.isEmpty == true { current?.title = clean(text) }
+        case "description", "summary", "content":
+            if current?.summary.isEmpty == true { current?.summary = clean(text) }
+        case "link":
+            if !isEntry, !text.isEmpty { current?.link = text }
+        case "pubdate", "published", "updated", "filing-date":
+            if current?.publishedAt == nil { current?.publishedAt = FeedDateParser.date(from: text) }
+        case "item", "entry":
+            if let current, !current.title.isEmpty {
+                items.append(
+                    ParsedFeedItem(
+                        title: current.title,
+                        summary: current.summary,
+                        link: current.link,
+                        publishedAt: current.publishedAt ?? Date()
+                    )
+                )
+            }
+            self.current = nil
+            isEntry = false
+        default:
+            break
+        }
+        currentText = ""
+    }
+
+    private func normalized(_ name: String) -> String {
+        name.split(separator: ":").last.map(String.init)?.lowercased() ?? name.lowercased()
+    }
+
+    private func clean(_ source: String) -> String {
+        source
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private struct Draft {
+        var title = ""
+        var summary = ""
+        var link: String?
+        var publishedAt: Date?
+    }
+}
+
+private enum FeedDateParser {
+    private static let formatters: [DateFormatter] = {
+        let patterns = [
+            "EEE, dd MMM yyyy HH:mm:ss Z",
+            "EEE, d MMM yyyy HH:mm:ss Z",
+            "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+            "yyyy-MM-dd"
+        ]
+        return patterns.map { pattern in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = pattern
+            return formatter
+        }
+    }()
+
+    static func date(from string: String) -> Date? {
+        formatters.lazy.compactMap { $0.date(from: string) }.first
+    }
+}
