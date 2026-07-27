@@ -20,4 +20,22 @@ struct SignalStoreMigrationTests {
         #expect(first.sources.filter { $0.sourceKind == .mediaSearch }.count == 11)
         #expect(second.sources.count == first.sources.count)
     }
+
+    @Test @MainActor
+    func markReadUpdatesAndPersistsEvent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let stateURL = directory.appending(path: "state.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = SignalStore(stateURL: stateURL)
+        let eventID = try #require(store.events.first?.id)
+        #expect(store.events.first { $0.id == eventID }?.isRead == false)
+
+        store.markRead(eventID)
+
+        #expect(store.events.first { $0.id == eventID }?.isRead == true)
+        let reloaded = SignalStore(stateURL: stateURL)
+        #expect(reloaded.events.first { $0.id == eventID }?.isRead == true)
+    }
 }

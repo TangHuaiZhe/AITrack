@@ -187,7 +187,9 @@ struct ContentView: View {
     private var detail: some View {
         if let event = selectedEvent {
             EventDetail(event: event)
-                .onAppear { store.markRead(event.id) }
+                .onChange(of: event.id, initial: true) { _, eventID in
+                    store.markRead(eventID)
+                }
         } else {
             ZStack {
                 Color(nsColor: .controlBackgroundColor)
