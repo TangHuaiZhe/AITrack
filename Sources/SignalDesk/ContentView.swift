@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var showingAddSource = false
     @State private var query = ""
     @State private var category: SignalCategory?
+    @State private var selectedTopic: String?
 
     var body: some View {
         NavigationSplitView {
@@ -140,11 +141,21 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(section?.title ?? "情报流")
+                    Text(selectedTopic.map { "\($0) 主题" } ?? section?.title ?? "情报流")
                         .font(.largeTitle.weight(.bold))
                     Text(refreshSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                if let selectedTopic {
+                    Button {
+                        self.selectedTopic = nil
+                        selection = nil
+                    } label: {
+                        Label("清除 \(selectedTopic) 筛选", systemImage: "xmark")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 Spacer()
                 if let message = store.statusMessage {
@@ -216,10 +227,11 @@ struct ContentView: View {
             default: sectionMatches = true
             }
             let categoryMatches = category == nil || event.category == category
+            let topicMatches = selectedTopic.map(event.matchedTopics.contains) ?? true
             let queryMatches = query.isEmpty ||
                 "\(event.sourceName) \(event.title) \(event.summary) \(event.matchedTopics.joined(separator: " "))"
                 .localizedCaseInsensitiveContains(query)
-            return sectionMatches && categoryMatches && queryMatches
+            return sectionMatches && categoryMatches && topicMatches && queryMatches
         }
     }
 
@@ -241,14 +253,28 @@ struct ContentView: View {
     }
 
     private func topicRow(_ title: String, color: Color) -> some View {
-        HStack {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(title)
-            Spacer()
-            Text("\(store.events.filter { $0.matchedTopics.contains(title) }.count)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+        Button {
+            selectedTopic = selectedTopic == title ? nil : title
+            section = .inbox
+            selection = nil
+        } label: {
+            HStack {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text(title)
+                Spacer()
+                Text("\(store.events.filter { $0.matchedTopics.contains(title) }.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                if selectedTopic == title {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(color)
+                }
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .listRowBackground(selectedTopic == title ? color.opacity(0.12) : Color.clear)
     }
 }
 
