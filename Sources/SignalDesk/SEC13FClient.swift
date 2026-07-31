@@ -106,7 +106,7 @@ enum HoldingsDiffer {
 }
 
 struct SEC13FClient {
-    private let userAgent = "TrackAI/0.7 local macOS research app github.com/TangHuaiZhe/AITrack"
+    private let userAgent = "TrackAI/0.7 tanghuaizhe@me.com"
 
     func fetch(_ source: TrackedSource) async throws -> [SignalEvent] {
         guard let cik = cik(from: source.feedURL) else { throw FeedError.invalidURL }
