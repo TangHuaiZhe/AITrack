@@ -204,7 +204,12 @@ struct SEC13FClient {
 
         for name in candidates {
             let data = try await request(URL(string: "\(base)/\(name)")!)
-            if let parsed = try? SEC13FXMLParser.parse(data: data), !parsed.isEmpty {
+            let valueMultiplier: Int64 = filing.filingDate >= "2023-01-03" ? 1 : 1_000
+            if let parsed = try? SEC13FXMLParser.parse(
+                data: data,
+                valueMultiplier: valueMultiplier
+            ),
+            !parsed.isEmpty {
                 return parsed
             }
         }
@@ -338,8 +343,8 @@ enum SECError: LocalizedError {
 }
 
 enum SEC13FXMLParser {
-    static func parse(data: Data) throws -> [Holding] {
-        let delegate = SEC13FXMLDelegate()
+    static func parse(data: Data, valueMultiplier: Int64 = 1) throws -> [Holding] {
+        let delegate = SEC13FXMLDelegate(valueMultiplier: valueMultiplier)
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse(), !delegate.holdings.isEmpty else {
@@ -350,9 +355,14 @@ enum SEC13FXMLParser {
 }
 
 private final class SEC13FXMLDelegate: NSObject, XMLParserDelegate {
+    private let valueMultiplier: Int64
     private var currentText = ""
     private var current: Draft?
     var holdings: [Holding] = []
+
+    init(valueMultiplier: Int64) {
+        self.valueMultiplier = valueMultiplier
+    }
 
     func parser(
         _ parser: XMLParser,
@@ -382,7 +392,7 @@ private final class SEC13FXMLDelegate: NSObject, XMLParserDelegate {
         case "nameofissuer": current?.issuer = text
         case "titleofclass": current?.titleOfClass = text
         case "cusip": current?.cusip = text
-        case "value": current?.valueThousands = Int64(text) ?? 0
+        case "value": current?.reportedValue = Int64(text) ?? 0
         case "sshprnamt": current?.shares = Double(text) ?? 0
         case "putcall": current?.putCall = text.isEmpty ? nil : text
         case "infotable":
@@ -392,7 +402,7 @@ private final class SEC13FXMLDelegate: NSObject, XMLParserDelegate {
                         issuer: current.issuer,
                         titleOfClass: current.titleOfClass,
                         cusip: current.cusip,
-                        valueUSD: current.valueThousands * 1_000,
+                        valueUSD: current.reportedValue * valueMultiplier,
                         shares: current.shares,
                         putCall: current.putCall
                     )
@@ -412,7 +422,7 @@ private final class SEC13FXMLDelegate: NSObject, XMLParserDelegate {
         var issuer = ""
         var titleOfClass = ""
         var cusip = ""
-        var valueThousands: Int64 = 0
+        var reportedValue: Int64 = 0
         var shares: Double = 0
         var putCall: String?
     }

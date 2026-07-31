@@ -3,7 +3,7 @@ import Testing
 @testable import SignalDesk
 
 struct SEC13FTests {
-    @Test func parsesInformationTable() throws {
+    @Test func parsesModernDollarValueInformationTable() throws {
         let xml = """
         <informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
           <infoTable>
@@ -23,8 +23,29 @@ struct SEC13FTests {
 
         #expect(holdings.count == 1)
         #expect(holdings[0].issuer == "EXAMPLE ROBOTICS INC")
-        #expect(holdings[0].valueUSD == 12_500_000)
+        #expect(holdings[0].valueUSD == 12_500)
         #expect(holdings[0].shares == 250_000)
+    }
+
+    @Test func parsesLegacyThousandsValueInformationTable() throws {
+        let xml = """
+        <informationTable>
+          <infoTable>
+            <nameOfIssuer>EXAMPLE INC</nameOfIssuer>
+            <titleOfClass>COM</titleOfClass>
+            <cusip>123456789</cusip>
+            <value>12500</value>
+            <shrsOrPrnAmt><sshPrnamt>250000</sshPrnamt></shrsOrPrnAmt>
+          </infoTable>
+        </informationTable>
+        """
+
+        let holdings = try SEC13FXMLParser.parse(
+            data: Data(xml.utf8),
+            valueMultiplier: 1_000
+        )
+
+        #expect(holdings[0].valueUSD == 12_500_000)
     }
 
     @Test func calculatesAddedExitedIncreasedAndDecreased() {

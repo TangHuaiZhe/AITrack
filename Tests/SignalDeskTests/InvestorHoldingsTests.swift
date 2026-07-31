@@ -16,7 +16,8 @@ struct InvestorHoldingsTests {
 
         #expect(context.history.count >= 2)
         #expect(context.portfolio.positions.count > 10)
-        #expect(context.portfolio.totalValueUSD > 0)
+        #expect(context.portfolio.totalValueUSD > 100_000_000_000)
+        #expect(context.portfolio.totalValueUSD < 1_000_000_000_000)
     }
 
     @Test func calculatesPortfolioWeights() throws {

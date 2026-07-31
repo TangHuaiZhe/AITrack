@@ -136,23 +136,7 @@ struct InvestorPortfolioView: View {
             VStack(spacing: 0) {
                 portfolioSummary(portfolio)
                 Divider()
-                ScrollView([.horizontal, .vertical]) {
-                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        Section {
-                            ForEach(portfolio.positions) { position in
-                                positionRow(position)
-                                Divider()
-                            }
-                        } header: {
-                            VStack(spacing: 0) {
-                                columnHeader
-                                Divider()
-                            }
-                            .background(.background)
-                        }
-                    }
-                    .frame(minWidth: 800)
-                }
+                holdingsTable(portfolio)
                 metricFootnote
             }
         } else {
@@ -187,66 +171,82 @@ struct InvestorPortfolioView: View {
         .padding(.vertical, 13)
     }
 
-    private var columnHeader: some View {
-        HStack(spacing: 12) {
-            Text("持仓").frame(maxWidth: .infinity, alignment: .leading)
-            column("占比", width: 62)
-            column("估算成本", width: 86)
-            column("估算盈亏", width: 82)
-            column("1 年", width: 62)
-            column("3 年", width: 62)
-            column("5 年", width: 62)
-            column("10 年", width: 62)
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 22)
-        .padding(.vertical, 9)
-    }
+    private func holdingsTable(_ portfolio: InvestorPortfolio) -> some View {
+        Table(portfolio.positions) {
+            TableColumn("持仓") { position in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(position.ticker ?? position.cusip)
+                            .font(.headline.monospaced())
+                        if let putCall = position.putCall {
+                            Text(putCall.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text(position.issuer)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .width(min: 180, ideal: 250)
 
-    private func positionRow(_ position: InvestorPosition) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Text(position.ticker ?? position.cusip)
-                        .font(.headline.monospaced())
-                    if let putCall = position.putCall {
-                        Text(putCall.uppercased())
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(.orange.opacity(0.14), in: Capsule())
+            TableColumn("占比") { position in
+                numericText(percent(position.portfolioWeight))
+            }
+            .width(min: 55, ideal: 65, max: 75)
+
+            TableColumn("股数") { position in
+                numericText(shares(position.shares))
+            }
+            .width(min: 70, ideal: 85, max: 100)
+
+            TableColumn("申报价值") { position in
+                numericText(usd(position.valueUSD))
+            }
+            .width(min: 78, ideal: 92, max: 110)
+
+            TableColumn("估算成本") { position in
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(position.estimatedCost.map(currency) ?? "—")
+                        .monospacedDigit()
+                    if let confidence = position.costConfidence {
+                        Text(confidence.title)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                Text(position.issuer)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Text("\(shares(position.shares)) 股 · \(usd(position.valueUSD))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .width(min: 82, ideal: 96, max: 110)
 
-            metric(percent(position.portfolioWeight), width: 62)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(position.estimatedCost.map(currency) ?? "—")
-                    .monospacedDigit()
-                if let confidence = position.costConfidence {
-                    Text(confidence.title)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+            TableColumn("估算盈亏") { position in
+                returnText(position.estimatedProfitLoss)
             }
-            .frame(width: 86, alignment: .trailing)
-            returnMetric(position.estimatedProfitLoss, width: 82)
-            returnMetric(position.returns.oneYear, width: 62)
-            returnMetric(position.returns.threeYears, width: 62)
-            returnMetric(position.returns.fiveYears, width: 62)
-            returnMetric(position.returns.tenYears, width: 62)
+            .width(min: 70, ideal: 80, max: 90)
+
+            TableColumn("1 年") { position in
+                returnText(position.returns.oneYear)
+            }
+            .width(min: 55, ideal: 65, max: 75)
+
+            TableColumn("3 年") { position in
+                returnText(position.returns.threeYears)
+            }
+            .width(min: 55, ideal: 65, max: 75)
+
+            TableColumn("5 年") { position in
+                returnText(position.returns.fiveYears)
+            }
+            .width(min: 55, ideal: 65, max: 75)
+
+            TableColumn("10 年") { position in
+                returnText(position.returns.tenYears)
+            }
+            .width(min: 55, ideal: 65, max: 75)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 11)
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
     }
 
     private var metricFootnote: some View {
@@ -271,22 +271,18 @@ struct InvestorPortfolioView: View {
         }
     }
 
-    private func column(_ text: String, width: CGFloat) -> some View {
-        Text(text).frame(width: width, alignment: .trailing)
-    }
-
-    private func metric(_ text: String, width: CGFloat) -> some View {
+    private func numericText(_ text: String) -> some View {
         Text(text)
             .monospacedDigit()
-            .frame(width: width, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    private func returnMetric(_ value: Double?, width: CGFloat) -> some View {
+    private func returnText(_ value: Double?) -> some View {
         Text(value.map(percent) ?? "—")
             .fontWeight(value.map { abs($0) >= 0.2 } == true ? .semibold : .regular)
             .foregroundStyle(returnColor(value))
             .monospacedDigit()
-            .frame(width: width, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func returnColor(_ value: Double?) -> Color {
