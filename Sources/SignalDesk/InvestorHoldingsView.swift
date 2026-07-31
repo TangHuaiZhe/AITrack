@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct InvestorListView: View {
@@ -188,6 +189,16 @@ struct InvestorPortfolioView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .textSelection(.enabled)
+                        .contextMenu {
+                            Button("复制公司名") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(
+                                    position.issuer,
+                                    forType: .string
+                                )
+                            }
+                        }
                 }
             }
             .width(min: 180, ideal: 250)
