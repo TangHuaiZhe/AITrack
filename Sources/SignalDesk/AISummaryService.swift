@@ -1,5 +1,6 @@
 import CoreFoundation
 import Foundation
+import PDFKit
 
 #if canImport(FoundationModels)
 import FoundationModels
@@ -51,18 +52,41 @@ struct AISummaryService {
     func summarize(_ event: SignalEvent) async throws -> AISummary {
         let articleText = await ArticleContentFetcher().content(for: event)
         guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
+        return try await summarize(
+            prompt: Self.prompt(
+                event: event,
+                articleText: Self.truncated(articleText, for: mode)
+            )
+        )
+    }
 
+    func summarize(_ writing: InvestorWriting) async throws -> AISummary {
+        let articleText = await ArticleContentFetcher().content(
+            title: writing.title,
+            summary: writing.sourceNote,
+            rawURL: writing.sourceURL
+        )
+        guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
+        return try await summarize(
+            prompt: Self.writingPrompt(
+                writing: writing,
+                articleText: Self.truncated(articleText, for: mode)
+            )
+        )
+    }
+
+    private func summarize(prompt: String) async throws -> AISummary {
         switch mode {
         case .deepSeek:
-            return try await summarizeWithDeepSeek(event: event, articleText: articleText)
+            return try await summarizeWithDeepSeek(prompt: prompt)
         case .ollama:
-            return try await summarizeWithOllama(event: event, articleText: articleText)
+            return try await summarizeWithOllama(prompt: prompt)
         case .localFirst:
             do {
-                return try await summarizeOnDevice(event: event, articleText: articleText)
+                return try await summarizeOnDevice(prompt: prompt)
             } catch let appleError {
                 do {
-                    return try await summarizeWithOllama(event: event, articleText: articleText)
+                    return try await summarizeWithOllama(prompt: prompt)
                 } catch let ollamaError {
                     throw AISummaryError.localProvidersUnavailable(
                         "Apple：\(appleError.localizedDescription)；Ollama：\(ollamaError.localizedDescription)"
@@ -92,7 +116,7 @@ struct AISummaryService {
         return "需要 macOS 26 或更高版本"
     }
 
-    private func summarizeOnDevice(event: SignalEvent, articleText: String) async throws -> AISummary {
+    private func summarizeOnDevice(prompt: String) async throws -> AISummary {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             let model = SystemLanguageModel.default
@@ -102,9 +126,7 @@ struct AISummaryService {
                     model: model,
                     instructions: Self.systemInstructions
                 )
-                let response = try await session.respond(
-                    to: Self.prompt(event: event, articleText: String(articleText.prefix(12_000)))
-                )
+                let response = try await session.respond(to: prompt)
                 return AISummary(
                     content: response.content.trimmingCharacters(in: .whitespacesAndNewlines),
                     provider: .appleOnDevice,
@@ -124,23 +146,23 @@ struct AISummaryService {
         throw AISummaryError.localModelRequiresMacOS26
     }
 
-    private func summarizeWithDeepSeek(event: SignalEvent, articleText: String) async throws -> AISummary {
+    private func summarizeWithDeepSeek(prompt: String) async throws -> AISummary {
         guard let key = KeychainStore.deepSeekAPIKey, !key.isEmpty else {
             throw AISummaryError.missingDeepSeekKey
         }
         let content = try await DeepSeekClient().summarize(
-            prompt: Self.prompt(event: event, articleText: String(articleText.prefix(40_000))),
+            prompt: prompt,
             apiKey: key
         )
         return AISummary(content: content, provider: .deepSeek, generatedAt: Date())
     }
 
-    private func summarizeWithOllama(event: SignalEvent, articleText: String) async throws -> AISummary {
+    private func summarizeWithOllama(prompt: String) async throws -> AISummary {
         let configured = UserDefaults.standard.string(forKey: Self.ollamaModelDefaultsKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let model = configured.flatMap { $0.isEmpty ? nil : $0 } ?? Self.defaultOllamaModel
         let content = try await OllamaClient().summarize(
-            prompt: Self.prompt(event: event, articleText: String(articleText.prefix(24_000))),
+            prompt: prompt,
             model: model
         )
         return AISummary(content: content, provider: .ollama, generatedAt: Date())
@@ -173,15 +195,62 @@ struct AISummaryService {
         \(articleText)
         """
     }
+
+    private static func writingPrompt(
+        writing: InvestorWriting,
+        articleText: String
+    ) -> String {
+        """
+        请分析下面这份投资者材料。严格区分作者明确陈述、基金团队陈述和你的推断。
+
+        固定输出结构：
+        一句话结论：不超过 60 字
+        核心投资观点：
+        - 3 至 6 条，保留关键数字、估值、时间和条件
+        持仓动作与理由：
+        - 分别列出买入/增持、减持/退出、继续持有；材料未提及则明确写“未提及”
+        相比上一期值得追踪的变化：
+        - 只能依据本材料判断；缺少上期材料时写“需要与上期原文对比”
+        风险、催化剂与反证条件：
+        - 各 1 至 3 条，标注“原文”或“推断”
+        与 13F 的核对提示：
+        - 指出文中提到但仍需用申报持仓核验的公司或动作
+        可信度与缺口：
+        - 说明署名归属、材料是否完整，以及可能缺失的信息
+
+        标题：\(writing.title)
+        作者：\(writing.author)
+        发布机构：\(writing.publisher)
+        归属：\(writing.attribution.title)
+        报告期：\(writing.period ?? "未标明")
+        来源说明：\(writing.sourceNote)
+        抓取内容：
+        \(articleText)
+        """
+    }
+
+    private static func truncated(_ text: String, for mode: AISummaryMode) -> String {
+        let limit: Int
+        switch mode {
+        case .localFirst: limit = 12_000
+        case .ollama: limit = 24_000
+        case .deepSeek: limit = 40_000
+        }
+        return String(text.prefix(limit))
+    }
 }
 
 struct ArticleContentFetcher {
     func content(for event: SignalEvent) async -> String {
-        let fallback = [event.title, event.summary]
+        await content(title: event.title, summary: event.summary, rawURL: event.url)
+    }
+
+    func content(title: String, summary: String, rawURL: String?) async -> String {
+        let fallback = [title, summary]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n\n")
 
-        guard let rawURL = event.url,
+        guard let rawURL,
               let url = URL(string: rawURL),
               !Self.isVideoURL(url) else {
             return fallback
@@ -194,13 +263,23 @@ struct ArticleContentFetcher {
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
                 forHTTPHeaderField: "User-Agent"
             )
-            request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+            request.setValue(
+                "text/html,application/xhtml+xml,application/pdf",
+                forHTTPHeaderField: "Accept"
+            )
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  let html = Self.decode(data: data, response: http) else {
+                  (200..<300).contains(http.statusCode) else {
                 return fallback
             }
+            let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+            if contentType.contains("application/pdf") || url.pathExtension.lowercased() == "pdf" {
+                let extracted = Self.extractPDFText(from: data)
+                return extracted.count >= 240
+                    ? String(extracted.prefix(40_000))
+                    : fallback
+            }
+            guard let html = Self.decode(data: data, response: http) else { return fallback }
             let extracted = Self.extractReadableText(from: html)
             guard extracted.count >= 240 else { return fallback }
             return String(extracted.prefix(40_000))
@@ -230,6 +309,14 @@ struct ArticleContentFetcher {
         candidate = replacing(pattern: #"[ \t]+"#, in: candidate, with: " ")
         candidate = replacing(pattern: #"\n\s*\n+"#, in: candidate, with: "\n\n")
         return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func extractPDFText(from data: Data) -> String {
+        guard let document = PDFDocument(data: data) else { return "" }
+        return (0..<document.pageCount)
+            .compactMap { document.page(at: $0)?.string }
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func decode(data: Data, response: HTTPURLResponse) -> String? {

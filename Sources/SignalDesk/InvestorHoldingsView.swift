@@ -1,6 +1,20 @@
 import AppKit
 import SwiftUI
 
+private enum InvestorDetailTab: String, CaseIterable, Identifiable {
+    case holdings
+    case writings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .holdings: "持仓"
+        case .writings: "观点与信件"
+        }
+    }
+}
+
 struct InvestorListView: View {
     @EnvironmentObject private var store: InvestorHoldingsStore
     @Binding var selection: String?
@@ -10,7 +24,7 @@ struct InvestorListView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("杰出投资者")
                     .font(.largeTitle.weight(.bold))
-                Text("基于 SEC 13F 的季度持仓，不是实时仓位")
+                Text("季度持仓、基金信与投资观点")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -50,6 +64,9 @@ struct InvestorListView: View {
 
 struct InvestorPortfolioView: View {
     @EnvironmentObject private var store: InvestorHoldingsStore
+    @EnvironmentObject private var writingStore: InvestorWritingStore
+    @State private var selectedTab = InvestorDetailTab.holdings
+    @State private var selectedWritingID: String?
     let investorID: String?
 
     private var investor: InvestorPreset? {
@@ -61,7 +78,15 @@ struct InvestorPortfolioView: View {
             VStack(spacing: 0) {
                 portfolioHeader(investor)
                 Divider()
-                portfolioContent(investor)
+                if selectedTab == .holdings {
+                    portfolioContent(investor)
+                } else {
+                    writingsContent(investor)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .onChange(of: investorID) {
+                selectedWritingID = writingStore.writings(for: investor.id).first?.id
             }
         } else {
             ContentUnavailableView(
@@ -82,50 +107,90 @@ struct InvestorPortfolioView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button {
-                    Task { await store.refresh(investor) }
-                } label: {
-                    Label(
-                        store.refreshingInvestorID == investor.id ? "刷新中" : "刷新持仓",
-                        systemImage: "arrow.clockwise"
-                    )
+                if selectedTab == .holdings {
+                    Button {
+                        Task { await store.refresh(investor) }
+                    } label: {
+                        Label(
+                            store.refreshingInvestorID == investor.id ? "刷新中" : "刷新持仓",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.refreshingInvestorID != nil)
+                } else {
+                    Button {
+                        Task { await writingStore.refresh(investor) }
+                    } label: {
+                        Label(
+                            writingStore.refreshingInvestorID == investor.id ? "刷新中" : "刷新观点",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(writingStore.refreshingInvestorID != nil)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.refreshingInvestorID != nil)
             }
 
-            HStack(spacing: 8) {
-                Label("SEC EDGAR", systemImage: "building.columns")
-                Text("季度末快照，最长可能滞后约 45 天")
-                if let portfolio = store.portfolio(for: investor.id) {
-                    Text("·")
-                    Text("报告期 \(portfolio.reportDate)")
-                    Text("·")
-                    Text("申报 \(portfolio.filingDate)")
+            Picker("查看内容", selection: $selectedTab) {
+                ForEach(InvestorDetailTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .pickerStyle(.segmented)
+            .frame(width: 260)
 
-            if store.refreshingInvestorID == investor.id {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(
-                        value: store.totalMarketSymbols > 0
-                            ? Double(store.completedMarketSymbols)
-                            : nil,
-                        total: store.totalMarketSymbols > 0
-                            ? Double(store.totalMarketSymbols)
-                            : 1
-                    )
-                    Text(store.statusMessage ?? "正在更新…")
+            if selectedTab == .holdings {
+                HStack(spacing: 8) {
+                    Label("SEC EDGAR", systemImage: "building.columns")
+                    Text("季度末快照，最长可能滞后约 45 天")
+                    if let portfolio = store.portfolio(for: investor.id) {
+                        Text("·")
+                        Text("报告期 \(portfolio.reportDate)")
+                        Text("·")
+                        Text("申报 \(portfolio.filingDate)")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if store.refreshingInvestorID == investor.id {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(
+                            value: store.totalMarketSymbols > 0
+                                ? Double(store.completedMarketSymbols)
+                                : nil,
+                            total: store.totalMarketSymbols > 0
+                                ? Double(store.totalMarketSymbols)
+                                : 1
+                        )
+                        Text(store.statusMessage ?? "正在更新…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if store.statusInvestorID == investor.id,
+                          let message = store.statusMessage {
+                    Text(message)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(message.hasPrefix("刷新失败") ? .red : .secondary)
                 }
-            } else if store.statusInvestorID == investor.id,
-                      let message = store.statusMessage {
-                Text(message)
+            } else {
+                HStack(spacing: 8) {
+                    Label("官方原文优先", systemImage: "checkmark.seal")
+                    Text("区分本人署名与基金团队材料；AI 仅在点击后解析")
+                    if let archive = InvestorWritingCatalog.archiveURL(for: investor.id) {
+                        Link("官方档案", destination: archive)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if writingStore.statusInvestorID == investor.id,
+                   let message = writingStore.statusMessage {
+                    Text(message)
                     .font(.caption)
-                    .foregroundStyle(message.hasPrefix("刷新失败") ? .red : .secondary)
+                    .foregroundStyle(message.hasPrefix("观点刷新失败") ? .red : .secondary)
+                }
             }
         }
         .padding(22)
@@ -170,6 +235,55 @@ struct InvestorPortfolioView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 13)
+    }
+
+    @ViewBuilder
+    private func writingsContent(_ investor: InvestorPreset) -> some View {
+        let writings = writingStore.writings(for: investor.id)
+        if writings.isEmpty {
+            ContentUnavailableView {
+                Label("暂无稳定公开基金信", systemImage: "doc.text.magnifyingglass")
+            } description: {
+                Text("这不代表投资者没有观点；只是目前没有可稳定核验、可公开访问的本人或基金官方信件来源。")
+            } actions: {
+                Button("检查官方来源") {
+                    Task { await writingStore.refresh(investor) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(writingStore.refreshingInvestorID != nil)
+            }
+        } else {
+            HSplitView {
+                List(writings, selection: $selectedWritingID) { writing in
+                    WritingRow(writing: writing)
+                        .tag(writing.id)
+                }
+                .listStyle(.inset)
+                .frame(minWidth: 270, idealWidth: 330, maxWidth: 390)
+
+                if let writing = selectedWriting(in: writings) {
+                    InvestorWritingDetail(writing: writing)
+                        .id(writing.id)
+                } else {
+                    ContentUnavailableView(
+                        "选择一份材料",
+                        systemImage: "doc.text",
+                        description: Text("查看署名、原始来源，并按需生成 AI 总结。")
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                if selectedWriting(in: writings) == nil {
+                    selectedWritingID = writings.first?.id
+                }
+            }
+        }
+    }
+
+    private func selectedWriting(in writings: [InvestorWriting]) -> InvestorWriting? {
+        guard let selectedWritingID else { return nil }
+        return writings.first { $0.id == selectedWritingID }
     }
 
     private func holdingsTable(_ portfolio: InvestorPortfolio) -> some View {
@@ -327,5 +441,213 @@ struct InvestorPortfolioView: View {
 
     private func shares(_ value: Double) -> String {
         value.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
+    }
+}
+
+private struct WritingRow: View {
+    let writing: InvestorWriting
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Label(writing.kind.title, systemImage: writing.kind.icon)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+                Spacer()
+                Text(writing.displaysYearOnly == true
+                    ? writing.period ?? writing.publishedAt.formatted(.dateTime.year())
+                    : writing.publishedAt.formatted(.dateTime.year().month().day()))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            Text(writing.title)
+                .font(.headline)
+                .lineLimit(3)
+            HStack(spacing: 6) {
+                Text(writing.author)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(writing.attribution.title)
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        writing.attribution == .namedAuthor
+                            ? Color.green.opacity(0.12)
+                            : Color.orange.opacity(0.12),
+                        in: Capsule()
+                    )
+                Spacer()
+                if writing.aiSummary != nil {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(.purple)
+                }
+            }
+        }
+        .padding(.vertical, 7)
+    }
+}
+
+private struct InvestorWritingDetail: View {
+    @EnvironmentObject private var store: InvestorWritingStore
+    @Environment(\.openURL) private var openURL
+    @State private var isSummarizing = false
+    @State private var summaryError: String?
+    let writing: InvestorWriting
+
+    private var currentWriting: InvestorWriting {
+        store.writing(id: writing.id, investorID: writing.investorID) ?? writing
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    Label(currentWriting.kind.title, systemImage: currentWriting.kind.icon)
+                        .foregroundStyle(.blue)
+                    Text(currentWriting.attribution.title)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(attributionColor.opacity(0.12), in: Capsule())
+                        .foregroundStyle(attributionColor)
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 9) {
+                    Text(currentWriting.title)
+                        .font(.title2.weight(.bold))
+                        .textSelection(.enabled)
+                    Text("\(currentWriting.author) · \(currentWriting.publisher)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    if let period = currentWriting.period {
+                        Text(
+                            currentWriting.displaysYearOnly == true
+                                ? "报告年份 \(period)"
+                                : "报告期 \(period) · "
+                                    + currentWriting.publishedAt.formatted(
+                                        date: .abbreviated,
+                                        time: .omitted
+                                    )
+                        )
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(
+                            currentWriting.publishedAt.formatted(
+                                date: .abbreviated,
+                                time: .omitted
+                            )
+                        )
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("来源归属")
+                        .font(.headline)
+                    Text(currentWriting.sourceNote)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("AI 投资分析", systemImage: "sparkles")
+                            .font(.headline)
+                        Spacer()
+                        if let summary = currentWriting.aiSummary {
+                            Text(summary.provider.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("重新生成") {
+                                store.clearSummary(
+                                    writingID: currentWriting.id,
+                                    investorID: currentWriting.investorID
+                                )
+                                Task { await generateSummary() }
+                            }
+                            .font(.caption)
+                            .disabled(isSummarizing)
+                        }
+                    }
+
+                    if let summary = currentWriting.aiSummary {
+                        MarkdownText(summary.content)
+                            .lineSpacing(6)
+                            .textSelection(.enabled)
+                        Text(
+                            "生成于 \(summary.generatedAt.formatted(date: .abbreviated, time: .shortened))"
+                                + " · AI 内容可能有误，请结合原文和 13F 核验"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    } else if isSummarizing {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("正在读取原文并分析投资观点…")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if let summaryError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(summaryError, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Button("重试") {
+                                Task { await generateSummary() }
+                            }
+                        }
+                    } else {
+                        Button {
+                            Task { await generateSummary() }
+                        } label: {
+                            Label("生成 AI 总结", systemImage: "sparkles")
+                        }
+                    }
+                }
+                .padding(16)
+                .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+
+                Button {
+                    if let url = URL(string: currentWriting.sourceURL) {
+                        openURL(url)
+                    }
+                } label: {
+                    Label("打开官方原文", systemImage: "arrow.up.right.square")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            .padding(24)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var attributionColor: Color {
+        currentWriting.attribution == .namedAuthor ? .green : .orange
+    }
+
+    @MainActor
+    private func generateSummary() async {
+        guard !isSummarizing else { return }
+        isSummarizing = true
+        summaryError = nil
+        defer { isSummarizing = false }
+
+        do {
+            let summary = try await AISummaryService().summarize(currentWriting)
+            store.saveSummary(
+                summary,
+                writingID: currentWriting.id,
+                investorID: currentWriting.investorID
+            )
+        } catch {
+            summaryError = error.localizedDescription
+        }
     }
 }

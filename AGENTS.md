@@ -17,6 +17,7 @@
 - `Sources/SignalDesk/InvestorHoldings.swift`：投资者预设、持仓模型和收益计算。
 - `Sources/SignalDesk/InvestorHoldingsClient.swift`：SEC 历史、OpenFIGI、Twelve Data 与本地缓存。
 - `Sources/SignalDesk/InvestorHoldingsView.swift`：投资者列表和持仓详情。
+- `Sources/SignalDesk/InvestorWritings.swift`：官方基金信目录、刷新、归属与独立缓存。
 - `Tests/SignalDeskTests/`：对应功能测试。
 
 ## 产品约束
@@ -29,6 +30,7 @@
 - 13F 属于延迟披露，不得表述为实时持仓。
 - 13F 不含真实买入价；成本和盈亏必须标注为估算，数据不足时显示不可用。
 - 证券年化收益率使用复权行情，不得冒充投资者组合回报。
+- 基金信必须区分本人署名和基金团队材料；不得将匿名或媒体转述归因给本人。
 
 ## 开发与验证
 

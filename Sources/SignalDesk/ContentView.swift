@@ -200,7 +200,10 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         if section == .investors {
-            InvestorPortfolioView(investorID: selectedInvestorID)
+            ZStack(alignment: .topLeading) {
+                Color(nsColor: .controlBackgroundColor)
+                InvestorPortfolioView(investorID: selectedInvestorID)
+            }
         } else if let event = selectedEvent {
             EventDetail(event: event)
                 .onChange(of: event.id, initial: true) { _, eventID in
@@ -452,7 +455,7 @@ private struct EventDetail: View {
                     }
 
                     if let summary = event.aiSummary {
-                        Text(summary.content)
+                        MarkdownText(summary.content)
                             .font(.body)
                             .lineSpacing(6)
                             .textSelection(.enabled)

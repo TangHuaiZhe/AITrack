@@ -4,6 +4,30 @@ import Testing
 
 struct AISummaryTests {
     @Test
+    func rendersMarkdownWithoutLosingSummaryLineBreaks() {
+        let markdown = """
+        **一句话结论：**
+        核心判断。
+
+        **核心观点：**
+        - 第一条
+        - 第二条
+        """
+
+        let rendered = MarkdownTextParser.parse(markdown)
+        let plainText = String(rendered.characters)
+
+        #expect(!plainText.contains("**"))
+        #expect(plainText.contains("\n\n"))
+        #expect(plainText.contains("- 第一条\n- 第二条"))
+        #expect(
+            rendered.runs.contains {
+                $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
+            }
+        )
+    }
+
+    @Test
     func extractsArticleAndRemovesPageChrome() {
         let html = """
         <html>

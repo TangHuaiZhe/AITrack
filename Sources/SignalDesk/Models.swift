@@ -168,7 +168,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .inbox: "情报流"
         case .highValue: "高价值"
         case .bookmarks: "已收藏"
-        case .investors: "投资者持仓"
+        case .investors: "杰出投资者"
         case .sources: "监控对象"
         case .settings: "设置"
         }
