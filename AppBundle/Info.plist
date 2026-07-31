@@ -10,6 +10,8 @@
     <string>SignalDesk</string>
     <key>CFBundleIdentifier</key>
     <string>com.tanghuaizhe.trackai</string>
+    <key>CFBundleIconFile</key>
+    <string>TrackAIIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -17,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.6.1</string>
+    <string>0.7.0</string>
     <key>CFBundleVersion</key>
-    <string>10</string>
+    <string>11</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>

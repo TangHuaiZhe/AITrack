@@ -13,6 +13,12 @@ struct Holding: Equatable {
     }
 }
 
+struct ReportedPortfolio: Equatable {
+    var reportDate: String
+    var filingDate: String
+    var holdings: [Holding]
+}
+
 enum HoldingChangeKind: String {
     case added
     case exited
@@ -100,11 +106,11 @@ enum HoldingsDiffer {
 }
 
 struct SEC13FClient {
-    private let userAgent = "TrackAI/0.2 macOS local research app"
+    private let userAgent = "TrackAI/0.7 local macOS research app github.com/TangHuaiZhe/AITrack"
 
     func fetch(_ source: TrackedSource) async throws -> [SignalEvent] {
         guard let cik = cik(from: source.feedURL) else { throw FeedError.invalidURL }
-        let filings = try await recentFilings(cik: cik)
+        let filings = try await recentFilings(cik: cik, limit: 2)
         guard filings.count >= 2 else {
             throw SECError.insufficientFilings
         }
@@ -132,7 +138,24 @@ struct SEC13FClient {
         )
     }
 
-    private func recentFilings(cik: String) async throws -> [SECFiling] {
+    func holdingsHistory(cik: String, limit: Int = 20) async throws -> [ReportedPortfolio] {
+        let filings = try await recentFilings(cik: cik, limit: limit)
+        guard !filings.isEmpty else { throw SECError.insufficientFilings }
+
+        var history: [ReportedPortfolio] = []
+        for filing in filings {
+            history.append(
+                ReportedPortfolio(
+                    reportDate: filing.reportDate,
+                    filingDate: filing.filingDate,
+                    holdings: try await holdings(cik: cik, filing: filing)
+                )
+            )
+        }
+        return history
+    }
+
+    private func recentFilings(cik: String, limit: Int) async throws -> [SECFiling] {
         let paddedCIK = String(repeating: "0", count: max(0, 10 - cik.count)) + cik
         let url = URL(string: "https://data.sec.gov/submissions/CIK\(paddedCIK).json")!
         let data = try await request(url)
@@ -159,7 +182,7 @@ struct SEC13FClient {
                     primaryDocument: recent.primaryDocument[index]
                 )
             )
-            if filings.count == 2 { break }
+            if filings.count == limit { break }
         }
         return filings
     }
@@ -189,6 +212,7 @@ struct SEC13FClient {
     }
 
     private func request(_ url: URL) async throws -> Data {
+        try await Task.sleep(for: .milliseconds(120))
         var request = URLRequest(url: url)
         request.timeoutInterval = 25
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -425,7 +449,7 @@ private struct SECArchiveIndex: Decodable {
     }
 }
 
-private enum SECDateParser {
+enum SECDateParser {
     static func date(_ string: String) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

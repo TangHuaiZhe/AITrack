@@ -157,6 +157,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case inbox
     case highValue
     case bookmarks
+    case investors
     case sources
     case settings
 
@@ -167,6 +168,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .inbox: "情报流"
         case .highValue: "高价值"
         case .bookmarks: "已收藏"
+        case .investors: "投资者持仓"
         case .sources: "监控对象"
         case .settings: "设置"
         }
@@ -177,6 +179,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .inbox: "rectangle.stack.fill"
         case .highValue: "sparkles"
         case .bookmarks: "bookmark.fill"
+        case .investors: "chart.pie.fill"
         case .sources: "person.2.fill"
         case .settings: "gearshape.fill"
         }

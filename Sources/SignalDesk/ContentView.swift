@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var store: SignalStore
+    @EnvironmentObject private var investorStore: InvestorHoldingsStore
     @Environment(\.openURL) private var openURL
     @State private var section: AppSection? = .inbox
     @State private var selection: String?
@@ -9,6 +10,7 @@ struct ContentView: View {
     @State private var query = ""
     @State private var category: SignalCategory?
     @State private var selectedTopic: SignalDomain?
+    @State private var selectedInvestorID = InvestorPreset.featured.first?.id
 
     var body: some View {
         NavigationSplitView {
@@ -16,6 +18,8 @@ struct ContentView: View {
         } content: {
             if section == .sources {
                 SourcesView(showingAddSource: $showingAddSource)
+            } else if section == .investors {
+                InvestorListView(selection: $selectedInvestorID)
             } else if section == .settings {
                 SettingsView()
             } else {
@@ -195,7 +199,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let event = selectedEvent {
+        if section == .investors {
+            InvestorPortfolioView(investorID: selectedInvestorID)
+        } else if let event = selectedEvent {
             EventDetail(event: event)
                 .onChange(of: event.id, initial: true) { _, eventID in
                     store.markRead(eventID)
@@ -246,6 +252,7 @@ struct ContentView: View {
         case .inbox: store.unreadCount
         case .highValue: store.highValueCount
         case .bookmarks: store.events.filter(\.isBookmarked).count
+        case .investors: InvestorPreset.featured.count
         case .sources: store.sources.count
         case .settings: nil
         }

@@ -215,6 +215,11 @@ struct SettingsView: View {
     @State private var deepSeekStatusIsError = false
     @State private var ollamaStatus = "检测中…"
     @State private var isCheckingOllama = false
+    @State private var twelveDataKey = KeychainStore.twelveDataAPIKey ?? ""
+    @State private var isTwelveDataRevealed = false
+    @State private var isTestingTwelveData = false
+    @State private var twelveDataStatus: String?
+    @State private var twelveDataStatusIsError = false
 
     var body: some View {
         ScrollView {
@@ -394,9 +399,72 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("SEC EDGAR", systemImage: "building.columns")
                             .font(.headline)
-                        Text("13F 数据直接读取 SEC 官方公开接口，无需 API Key。TrackAI 对最近两个报告期进行逐证券差分。")
+                        Text("13F 数据直接读取 SEC 官方公开接口，无需 API Key。TrackAI 对最近两个报告期进行逐证券差分，并用约 5 年申报历史估算建仓成本。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Label("Twelve Data 行情", systemImage: "chart.line.uptrend.xyaxis")
+                            .font(.headline)
+                        Text("用于计算持仓的估算盈亏与 1/3/5/10 年拆股复权价格 CAGR。免费 Basic 计划限 8 credits/分钟、800 credits/天；TrackAI 会按 8 个标的一批自动等待并缓存结果。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Group {
+                                if isTwelveDataRevealed {
+                                    TextField("Twelve Data API Key（可选）", text: $twelveDataKey)
+                                } else {
+                                    SecureField("Twelve Data API Key（可选）", text: $twelveDataKey)
+                                }
+                            }
+                            .textFieldStyle(.roundedBorder)
+
+                            Button {
+                                isTwelveDataRevealed.toggle()
+                            } label: {
+                                Image(systemName: isTwelveDataRevealed ? "eye.slash" : "eye")
+                            }
+                        }
+
+                        HStack {
+                            Button("保存到钥匙串") {
+                                let key = twelveDataKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                                KeychainStore.twelveDataAPIKey = key
+                                twelveDataStatus = key.isEmpty ? "已移除 API Key" : "API Key 已安全保存"
+                                twelveDataStatusIsError = false
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isTestingTwelveData)
+
+                            Button("验证连接") {
+                                Task { await validateTwelveData() }
+                            }
+                            .disabled(twelveDataKey.isEmpty || isTestingTwelveData)
+
+                            Link(
+                                "获取免费 Key",
+                                destination: URL(string: "https://twelvedata.com/pricing")!
+                            )
+
+                            if isTestingTwelveData {
+                                ProgressView().controlSize(.small)
+                            }
+                            if let twelveDataStatus {
+                                Label(
+                                    twelveDataStatus,
+                                    systemImage: twelveDataStatusIsError
+                                        ? "xmark.circle.fill"
+                                        : "checkmark.circle.fill"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(twelveDataStatusIsError ? .red : .green)
+                            }
+                        }
                     }
                     .padding(8)
                 }
@@ -440,6 +508,23 @@ struct SettingsView: View {
         } catch {
             deepSeekStatus = error.localizedDescription
             deepSeekStatusIsError = true
+        }
+    }
+
+    @MainActor
+    private func validateTwelveData() async {
+        isTestingTwelveData = true
+        twelveDataStatus = nil
+        defer { isTestingTwelveData = false }
+        let key = twelveDataKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await TwelveDataClient().validate(apiKey: key)
+            KeychainStore.twelveDataAPIKey = key
+            twelveDataStatus = "连接成功，API Key 已保存"
+            twelveDataStatusIsError = false
+        } catch {
+            twelveDataStatus = error.localizedDescription
+            twelveDataStatusIsError = true
         }
     }
 

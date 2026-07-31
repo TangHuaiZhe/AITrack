@@ -27,12 +27,18 @@ if [[ -z "$trackai_signing_identity" ]]; then
 fi
 
 cd "$project_dir"
-swift build -c release
+swift_build_args=(-c release)
+if [[ "${TRACKAI_DISABLE_SWIFT_SANDBOX:-0}" == "1" ]]; then
+    swift_build_args+=(--disable-sandbox)
+fi
+swift build "${swift_build_args[@]}"
 
 rm -rf "$bundle_dir"
 mkdir -p "$executable_dir"
 cp ".build/release/SignalDesk" "$executable_dir/SignalDesk"
 cp "AppBundle/Info.plist" "$bundle_dir/Contents/Info.plist"
+mkdir -p "$bundle_dir/Contents/Resources"
+cp "AppBundle/TrackAIIcon.icns" "$bundle_dir/Contents/Resources/TrackAIIcon.icns"
 
 codesign --force --options runtime --sign "$trackai_signing_identity" "$bundle_dir"
 codesign --verify --deep --strict --verbose=2 "$bundle_dir"

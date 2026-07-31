@@ -1,5 +1,6 @@
 # Swift build products
 .build/
+.cache/
 dist/
 .swiftpm/
 

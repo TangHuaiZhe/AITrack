@@ -3,11 +3,13 @@ import SwiftUI
 @main
 struct SignalDeskApp: App {
     @StateObject private var store = SignalStore()
+    @StateObject private var investorStore = InvestorHoldingsStore()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(investorStore)
                 .frame(minWidth: 1_040, minHeight: 680)
         }
         .windowStyle(.hiddenTitleBar)

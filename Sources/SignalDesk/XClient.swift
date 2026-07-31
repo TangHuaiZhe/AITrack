@@ -103,6 +103,11 @@ enum KeychainStore {
         set { write(newValue, account: "deepseek-api-key") }
     }
 
+    static var twelveDataAPIKey: String? {
+        get { read(account: "twelve-data-api-key") }
+        set { write(newValue, account: "twelve-data-api-key") }
+    }
+
     private static func read(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
