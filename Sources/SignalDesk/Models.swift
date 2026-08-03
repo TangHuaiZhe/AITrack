@@ -12,7 +12,7 @@ enum SourceKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .rss: "RSS / Atom"
         case .sec13F: "SEC 13F"
-        case .x: "X 官方 API"
+        case .x: "X 第三方 API"
         case .mediaSearch: "采访 / 播客 / 视频"
         }
     }

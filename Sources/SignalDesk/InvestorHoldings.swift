@@ -23,6 +23,13 @@ struct InvestorPreset: Identifiable, Hashable {
             cik: "1336528"
         ),
         InvestorPreset(
+            id: "ray-dalio",
+            name: "Ray Dalio",
+            firm: "Bridgewater Associates",
+            style: "全球宏观、经济周期与风险平价",
+            cik: "1350694"
+        ),
+        InvestorPreset(
             id: "seth-klarman",
             name: "Seth Klarman",
             firm: "Baupost Group",
@@ -112,6 +119,7 @@ struct InvestorPosition: Identifiable, Codable, Equatable {
     var titleOfClass: String
     var cusip: String
     var ticker: String?
+    var localizedName: String? = nil
     var shares: Double
     var valueUSD: Int64
     var portfolioWeight: Double
@@ -124,6 +132,25 @@ struct InvestorPosition: Identifiable, Codable, Equatable {
     var marketDataAsOf: Date?
 
     var id: String { securityKey }
+
+    var chineseName: String? {
+        guard let localizedName,
+              localizedName.range(of: #"\p{Han}"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return localizedName
+    }
+
+    var xueqiuURL: URL? {
+        guard putCall == nil,
+              let ticker = ticker?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !ticker.isEmpty else {
+            return nil
+        }
+        return URL(string: "https://xueqiu.com")?
+            .appending(path: "S")
+            .appending(path: ticker.uppercased())
+    }
 }
 
 enum CostConfidence: String, Codable {

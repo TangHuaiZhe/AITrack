@@ -24,6 +24,10 @@ enum FeedError: LocalizedError {
 }
 
 struct FeedClient {
+    func fetchX(_ sources: [TrackedSource]) async throws -> [UUID: [SignalEvent]] {
+        try await XClient().fetch(sources)
+    }
+
     func fetch(_ source: TrackedSource) async throws -> [SignalEvent] {
         switch source.sourceKind {
         case .rss, .mediaSearch:

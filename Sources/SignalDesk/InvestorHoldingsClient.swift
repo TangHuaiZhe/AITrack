@@ -92,6 +92,73 @@ struct OpenFIGIClient {
     }
 }
 
+struct ChineseSecurityNameClient {
+    func names(for symbols: [String]) async throws -> [String: String] {
+        let requested = Array(
+            Set(
+                symbols
+                    .map { $0.uppercased() }
+                    .filter { !$0.isEmpty }
+            )
+        )
+        .sorted()
+        guard !requested.isEmpty else { return [:] }
+
+        var names = Self.fallbackNames.filter { requested.contains($0.key) }
+        for chunk in requested.chunked(into: 30) {
+            var components = URLComponents(
+                string: "https://push2delay.eastmoney.com/api/qt/ulist.np/get"
+            )!
+            let securityIDs = chunk.flatMap { symbol in
+                [105, 106, 107].map { "\($0).\(symbol)" }
+            }
+            components.queryItems = [
+                URLQueryItem(name: "secids", value: securityIDs.joined(separator: ",")),
+                URLQueryItem(name: "fields", value: "f12,f13,f14")
+            ]
+
+            var request = URLRequest(url: components.url!)
+            request.timeoutInterval = 20
+            request.setValue(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+                forHTTPHeaderField: "User-Agent"
+            )
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw FeedError.invalidResponse
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw FeedError.http(http.statusCode)
+            }
+            names.merge(try Self.parse(data: data)) { current, _ in current }
+        }
+        return names
+    }
+
+    static func parse(data: Data) throws -> [String: String] {
+        let response = try JSONDecoder().decode(EastMoneyNameResponse.self, from: data)
+        return Dictionary(
+            (response.data?.diff ?? []).compactMap { item in
+                guard let symbol = item.f12?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let name = item.f14?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !symbol.isEmpty,
+                      !name.isEmpty,
+                      name != "-",
+                      name.range(of: #"\p{Han}"#, options: .regularExpression) != nil else {
+                    return nil
+                }
+                return (symbol.uppercased(), name)
+            },
+            uniquingKeysWith: { current, _ in current }
+        )
+    }
+
+    private static let fallbackNames = [
+        "BRK.B": "伯克希尔-哈撒韦B",
+        "LEN.B": "莱纳B"
+    ]
+}
+
 struct TwelveDataClient {
     func validate(apiKey: String) async throws {
         let result = try await monthlyPrices(symbols: ["AAPL"], apiKey: apiKey, startDate: nil)
@@ -211,7 +278,9 @@ final class InvestorHoldingsStore: ObservableObject {
 
     private let stateURL: URL
     private let portfolioService = InvestorPortfolioService()
+    private let chineseNameClient = ChineseSecurityNameClient()
     private let marketClient = TwelveDataClient()
+    private var localizingInvestorIDs: Set<String> = []
 
     init(stateURL: URL? = nil) {
         self.stateURL = stateURL ?? Self.defaultStateURL
@@ -247,6 +316,8 @@ final class InvestorHoldingsStore: ObservableObject {
                 into: context.portfolio,
                 cached: portfolios[investor.id]
             )
+            let chineseNames = await fetchChineseNames(for: portfolio)
+            applyChineseNames(chineseNames, to: &portfolio)
             portfolios[investor.id] = portfolio
             save()
 
@@ -294,6 +365,47 @@ final class InvestorHoldingsStore: ObservableObject {
         }
     }
 
+    func loadChineseNames(for investorID: String) async {
+        guard localizingInvestorIDs.insert(investorID).inserted,
+              let portfolio = portfolios[investorID] else {
+            return
+        }
+        defer { localizingInvestorIDs.remove(investorID) }
+
+        let names = await fetchChineseNames(for: portfolio)
+        guard !names.isEmpty,
+              var current = portfolios[investorID] else {
+            return
+        }
+        applyChineseNames(names, to: &current)
+        portfolios[investorID] = current
+        save()
+    }
+
+    private func fetchChineseNames(for portfolio: InvestorPortfolio) async -> [String: String] {
+        let missingSymbols = portfolio.positions.compactMap { position -> String? in
+            guard position.chineseName == nil,
+                  position.putCall == nil else {
+                return nil
+            }
+            return position.ticker
+        }
+        return (try? await chineseNameClient.names(for: missingSymbols)) ?? [:]
+    }
+
+    private func applyChineseNames(
+        _ names: [String: String],
+        to portfolio: inout InvestorPortfolio
+    ) {
+        for index in portfolio.positions.indices {
+            guard let ticker = portfolio.positions[index].ticker?.uppercased(),
+                  let name = names[ticker] else {
+                continue
+            }
+            portfolio.positions[index].localizedName = name
+        }
+    }
+
     private func enrich(
         portfolio: inout InvestorPortfolio,
         pricesByTicker: [String: [MarketPricePoint]],
@@ -331,6 +443,8 @@ final class InvestorHoldingsStore: ObservableObject {
         for index in merged.positions.indices {
             guard let prior = cachedByKey[merged.positions[index].securityKey] else { continue }
             merged.positions[index].ticker = merged.positions[index].ticker ?? prior.ticker
+            merged.positions[index].localizedName =
+                merged.positions[index].localizedName ?? prior.localizedName
             merged.positions[index].latestPrice = prior.latestPrice
             merged.positions[index].estimatedCost = prior.estimatedCost
             merged.positions[index].estimatedProfitLoss = prior.estimatedProfitLoss
@@ -393,6 +507,19 @@ private struct OpenFIGIMatch: Decodable {
     var exchCode: String?
     var marketSector: String?
     var securityType2: String?
+}
+
+private struct EastMoneyNameResponse: Decodable {
+    var data: EastMoneyNameData?
+}
+
+private struct EastMoneyNameData: Decodable {
+    var diff: [EastMoneyNameItem]?
+}
+
+private struct EastMoneyNameItem: Decodable {
+    var f12: String?
+    var f14: String?
 }
 
 private struct TwelveDataSeries: Decodable {

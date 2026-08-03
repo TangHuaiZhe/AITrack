@@ -233,6 +233,23 @@ extension PersonPreset {
             xUsername: "satyanadella",
             xNote: "本人 X · 企业 AI 战略",
             feeds: []
+        ),
+        PersonPreset(
+            id: "ray-dalio",
+            name: "瑞·达利欧 / Ray Dalio",
+            stance: "以长期债务周期、货币体系和大国兴衰理解全球宏观变化",
+            horizon: "关注跨周期结构性变化，不强调短期点位预测",
+            variables: ["debt cycle", "economic machine", "world order", "monetary policy", "credit", "China", "diversification", "gold", "债务周期", "经济机器", "世界秩序", "货币政策", "信用", "中国", "分散配置", "黄金"],
+            defaultDomains: [.investmentBusiness],
+            xUsername: "RayDalio",
+            xNote: "本人 X；本应用不导入 X",
+            feeds: [
+                PresetFeed(
+                    label: "个人 YouTube",
+                    role: "本人公开视频、宏观框架与访谈片段",
+                    url: youtubeFeed("UCqvaXJ1K3HheTPNjH-KpwXQ")
+                )
+            ]
         )
     ]
 

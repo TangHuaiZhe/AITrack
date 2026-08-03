@@ -88,6 +88,9 @@ struct InvestorPortfolioView: View {
             .onChange(of: investorID) {
                 selectedWritingID = writingStore.writings(for: investor.id).first?.id
             }
+            .task(id: investorID) {
+                await store.loadChineseNames(for: investor.id)
+            }
         } else {
             ContentUnavailableView(
                 "选择一位投资者",
@@ -289,33 +292,29 @@ struct InvestorPortfolioView: View {
     private func holdingsTable(_ portfolio: InvestorPortfolio) -> some View {
         Table(portfolio.positions) {
             TableColumn("持仓") { position in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(position.ticker ?? position.cusip)
-                            .font(.headline.monospaced())
-                        if let putCall = position.putCall {
-                            Text(putCall.uppercased())
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.orange)
+                Group {
+                    if let url = position.xueqiuURL {
+                        Link(destination: url) {
+                            holdingIdentity(position, showsExternalLink: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("在雪球打开 \(position.ticker ?? position.issuer)")
+                    } else {
+                        holdingIdentity(position, showsExternalLink: false)
+                    }
+                }
+                .contextMenu {
+                    if let localizedName = position.chineseName {
+                        Button("复制中文名") {
+                            copyToPasteboard(localizedName)
                         }
                     }
-                    Text(position.issuer)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                        .contextMenu {
-                            Button("复制公司名") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(
-                                    position.issuer,
-                                    forType: .string
-                                )
-                            }
-                        }
+                    Button("复制英文公司名") {
+                        copyToPasteboard(position.issuer)
+                    }
                 }
             }
-            .width(min: 180, ideal: 250)
+            .width(min: 190, ideal: 270)
 
             TableColumn("占比") { position in
                 numericText(percent(position.portfolioWeight))
@@ -374,6 +373,43 @@ struct InvestorPortfolioView: View {
         .tableStyle(.inset(alternatesRowBackgrounds: true))
     }
 
+    private func holdingIdentity(
+        _ position: InvestorPosition,
+        showsExternalLink: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(position.ticker ?? position.cusip)
+                    .font(.headline.monospaced())
+                if let localizedName = position.chineseName {
+                    Text(localizedName)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                }
+                if let putCall = position.putCall {
+                    Text(putCall.uppercased())
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.orange)
+                }
+                if showsExternalLink {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                }
+            }
+            Text(position.issuer)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+
     private var metricFootnote: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("估算成本：历史股数先按拆股追溯调整，再按过去约 5 年季度增仓量和当期价格加权；减仓不重置成本。")
@@ -412,8 +448,8 @@ struct InvestorPortfolioView: View {
 
     private func returnColor(_ value: Double?) -> Color {
         guard let value else { return .secondary }
-        if value > 0 { return .green }
-        if value < 0 { return .red }
+        if value > 0 { return .red }
+        if value < 0 { return .green }
         return .primary
     }
 

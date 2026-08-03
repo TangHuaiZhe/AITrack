@@ -3,6 +3,72 @@ import Testing
 @testable import SignalDesk
 
 struct InvestorHoldingsTests {
+    @Test
+    func includesRayDalioBridgewater13F() throws {
+        let investor = try #require(
+            InvestorPreset.featured.first { $0.id == "ray-dalio" }
+        )
+
+        #expect(investor.name == "Ray Dalio")
+        #expect(investor.firm == "Bridgewater Associates")
+        #expect(investor.cik == "1350694")
+    }
+
+    @Test
+    func parsesChineseSecurityNamesAndBuildsXueqiuURL() throws {
+        let data = Data(
+            """
+            {
+              "data": {
+                "diff": [
+                  {"f12": "AAPL", "f14": "苹果"},
+                  {"f12": "PDD", "f14": "拼多多"},
+                  {"f12": "ALLY", "f14": "Ally Financial Inc"}
+                ]
+              }
+            }
+            """.utf8
+        )
+
+        let names = try ChineseSecurityNameClient.parse(data: data)
+        let position = InvestorPosition(
+            securityKey: "037833100|COM|",
+            issuer: "Apple Inc",
+            titleOfClass: "COM",
+            cusip: "037833100",
+            ticker: "AAPL",
+            shares: 10,
+            valueUSD: 1_000,
+            portfolioWeight: 1,
+            putCall: nil,
+            latestPrice: nil,
+            estimatedCost: nil,
+            estimatedProfitLoss: nil,
+            costConfidence: nil,
+            returns: .empty,
+            marketDataAsOf: nil
+        )
+        let url = try #require(position.xueqiuURL)
+
+        #expect(names["AAPL"] == "苹果")
+        #expect(names["PDD"] == "拼多多")
+        #expect(names["ALLY"] == nil)
+        #expect(url.absoluteString == "https://xueqiu.com/S/AAPL")
+    }
+
+    @Test(.enabled(
+        if: ProcessInfo.processInfo.environment["TRACKAI_LIVE_CHINESE_NAME_TEST"] == "1"
+    ))
+    func fetchesLiveChineseSecurityNames() async throws {
+        let names = try await ChineseSecurityNameClient().names(
+            for: ["AAPL", "PDD", "BRK.B"]
+        )
+
+        #expect(names["AAPL"] == "苹果")
+        #expect(names["PDD"] == "拼多多")
+        #expect(names["BRK.B"] == "伯克希尔-哈撒韦B")
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TRACKAI_LIVE_SEC_TEST"] == "1"))
     func fetchesLiveBerkshirePortfolioHistory() async throws {
         let investor = try #require(

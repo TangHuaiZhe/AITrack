@@ -14,12 +14,14 @@ final class SignalStore: ObservableObject {
     private let stateURL: URL
     private var installedCatalogIDs = Set<String>()
     private static let requestedPeopleCatalogID = "ai-robotics-longform-v4"
+    private static let rayDalioCatalogID = "ray-dalio-v1"
     private static let domainTaxonomyID = "signal-domains-v3"
 
     init(stateURL: URL? = nil) {
         self.stateURL = stateURL ?? Self.defaultStateURL
         load()
         installRequestedPeopleIfNeeded()
+        installRayDalioIfNeeded()
         installDomainTaxonomyIfNeeded()
     }
 
@@ -107,8 +109,31 @@ final class SignalStore: ObservableObject {
 
         var added: [SignalEvent] = []
         var failures: [String] = []
+        let enabledSources = sources.filter(\.isEnabled)
+        let batchesBrightDataX = XProvider.selected == .brightData
+        let brightDataXSources = batchesBrightDataX
+            ? enabledSources.filter { $0.sourceKind == .x }
+            : []
 
-        for source in sources where source.isEnabled {
+        if !brightDataXSources.isEmpty {
+            do {
+                let incomingBySource = try await client.fetchX(brightDataXSources)
+                let existingIDs = Set(events.map(\.id))
+                for source in brightDataXSources {
+                    let incoming = incomingBySource[source.id] ?? []
+                    added.append(contentsOf: incoming.filter { !existingIDs.contains($0.id) })
+                    if let index = sources.firstIndex(where: { $0.id == source.id }) {
+                        sources[index].lastCheckedAt = Date()
+                    }
+                }
+            } catch {
+                failures.append(contentsOf: brightDataXSources.map {
+                    "\($0.name)：\(error.localizedDescription)"
+                })
+            }
+        }
+
+        for source in enabledSources where !(batchesBrightDataX && source.sourceKind == .x) {
             if source.sourceKind == .mediaSearch,
                let lastCheckedAt = source.lastCheckedAt,
                Date().timeIntervalSince(lastCheckedAt) < 6 * 60 * 60 {
@@ -241,6 +266,25 @@ final class SignalStore: ObservableObject {
 
     private static func sourceKey(_ source: TrackedSource) -> String {
         "\(source.sourceKind.rawValue)|\(source.feedURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
+    private func installRayDalioIfNeeded() {
+        guard installedCatalogIDs.insert(Self.rayDalioCatalogID).inserted,
+              let rayDalio = PersonPreset.aiRoboticsLeaders.first(where: { $0.id == "ray-dalio" }) else {
+            return
+        }
+
+        var keys = Set(sources.map(Self.sourceKey))
+        var added = 0
+        for source in rayDalio.trackedSources() {
+            guard keys.insert(Self.sourceKey(source)).inserted else { continue }
+            sources.append(source)
+            added += 1
+        }
+        if added > 0 {
+            statusMessage = "已新增瑞·达利欧的 \(added) 个情报来源"
+        }
+        save()
     }
 
     private func installDomainTaxonomyIfNeeded() {

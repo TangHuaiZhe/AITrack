@@ -119,8 +119,8 @@ struct AddSourceView: View {
                 } else {
                     TextField("X 用户名（不含 @ 也可以）", text: $username)
                     TextField("关注主题（逗号分隔）", text: $topics)
-                    if KeychainStore.xBearerToken == nil {
-                        Label("请先在设置中保存 X API Bearer Token", systemImage: "key")
+                    if XProvider.selected.apiKey == nil {
+                        Label("请先在设置中保存 \(XProvider.selected.title) API Key", systemImage: "key")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -175,7 +175,7 @@ struct AddSourceView: View {
                 role: role.isEmpty ? "X 公开观点" : role,
                 username: username,
                 topics: parsedTopics,
-                isEnabled: KeychainStore.xBearerToken != nil
+                isEnabled: XProvider.selected.apiKey != nil
             )
         } else {
             source = TrackedSource(
@@ -203,7 +203,9 @@ struct SettingsView: View {
     @EnvironmentObject private var store: SignalStore
     @AppStorage(AISummaryService.modeDefaultsKey) private var summaryModeRaw = AISummaryMode.localFirst.rawValue
     @AppStorage(AISummaryService.ollamaModelDefaultsKey) private var ollamaModel = AISummaryService.defaultOllamaModel
-    @State private var token = KeychainStore.xBearerToken ?? ""
+    @AppStorage(XProvider.defaultsKey) private var xProviderRaw = XProvider.twitterAPIIO.rawValue
+    @State private var twitterAPIKey = KeychainStore.twitterAPIIOKey ?? ""
+    @State private var brightDataAPIKey = KeychainStore.brightDataAPIKey ?? ""
     @State private var isRevealed = false
     @State private var isTesting = false
     @State private var status: String?
@@ -344,18 +346,33 @@ struct SettingsView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 14) {
-                        Label("X 官方 API", systemImage: "at")
+                        Label("X 数据服务", systemImage: "at")
                             .font(.headline)
-                        Text("用于读取关键人物的公开 Posts。需要 X Developer Portal 中 App 的 Bearer Token。")
+                        Text("选择第三方服务读取关键人物的公开 Posts，无需 X Developer Token；两家服务的 API Key 分别保存在钥匙串。")
                             .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        Picker("服务商", selection: $xProviderRaw) {
+                            ForEach(XProvider.allCases) { provider in
+                                Text(provider.title).tag(provider.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: xProviderRaw) { _, _ in
+                            status = nil
+                            statusIsError = false
+                        }
+
+                        Text(selectedXProvider.detail)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
 
                         HStack {
                             Group {
                                 if isRevealed {
-                                    TextField("Bearer Token", text: $token)
+                                    TextField("\(selectedXProvider.title) API Key", text: selectedXAPIKeyBinding)
                                 } else {
-                                    SecureField("Bearer Token", text: $token)
+                                    SecureField("\(selectedXProvider.title) API Key", text: selectedXAPIKeyBinding)
                                 }
                             }
                             .textFieldStyle(.roundedBorder)
@@ -369,10 +386,7 @@ struct SettingsView: View {
 
                         HStack {
                             Button("保存到钥匙串") {
-                                KeychainStore.xBearerToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !token.isEmpty { store.enableXSources() }
-                                status = token.isEmpty ? "已移除 Token" : "Token 已安全保存"
-                                statusIsError = false
+                                saveXAPIKey()
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(isTesting)
@@ -380,7 +394,12 @@ struct SettingsView: View {
                             Button("验证连接") {
                                 Task { await validate() }
                             }
-                            .disabled(token.isEmpty || isTesting)
+                            .disabled(selectedXAPIKey.isEmpty || isTesting)
+
+                            Link(
+                                "获取 API Key",
+                                destination: selectedXProvider.signupURL
+                            )
 
                             if isTesting {
                                 ProgressView().controlSize(.small)
@@ -477,16 +496,51 @@ struct SettingsView: View {
         }
     }
 
+    private var selectedXProvider: XProvider {
+        XProvider(rawValue: xProviderRaw) ?? .twitterAPIIO
+    }
+
+    private var selectedXAPIKey: String {
+        switch selectedXProvider {
+        case .twitterAPIIO: twitterAPIKey
+        case .brightData: brightDataAPIKey
+        }
+    }
+
+    private var selectedXAPIKeyBinding: Binding<String> {
+        switch selectedXProvider {
+        case .twitterAPIIO: $twitterAPIKey
+        case .brightData: $brightDataAPIKey
+        }
+    }
+
+    @MainActor
+    private func saveXAPIKey() {
+        let key = selectedXAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch selectedXProvider {
+        case .twitterAPIIO: KeychainStore.twitterAPIIOKey = key
+        case .brightData: KeychainStore.brightDataAPIKey = key
+        }
+        if !key.isEmpty { store.enableXSources() }
+        status = key.isEmpty ? "已移除 API Key" : "API Key 已安全保存"
+        statusIsError = false
+    }
+
     @MainActor
     private func validate() async {
         isTesting = true
         status = nil
         defer { isTesting = false }
         do {
-            try await XClient().validateToken(token.trimmingCharacters(in: .whitespacesAndNewlines))
-            KeychainStore.xBearerToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            let provider = selectedXProvider
+            let key = selectedXAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            try await XClient(provider: provider).validateAPIKey(key)
+            switch provider {
+            case .twitterAPIIO: KeychainStore.twitterAPIIOKey = key
+            case .brightData: KeychainStore.brightDataAPIKey = key
+            }
             store.enableXSources()
-            status = "连接成功，Token 已保存"
+            status = "\(provider.title) 连接成功，API Key 已保存"
             statusIsError = false
         } catch {
             status = error.localizedDescription
@@ -560,7 +614,7 @@ struct PeopleCatalogView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("AI / 机器人关键人物")
+                        Text("AI / 机器人 / 投资关键人物")
                             .font(.title2.weight(.bold))
                         Text("来自你提供的清单。每个来源均区分本人观点与机构输出。")
                             .foregroundStyle(.secondary)

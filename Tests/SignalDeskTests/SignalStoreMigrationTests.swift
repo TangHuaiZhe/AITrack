@@ -14,11 +14,39 @@ struct SignalStoreMigrationTests {
         let firstKeys = Set(first.sources.map { "\($0.sourceKind.rawValue)|\($0.feedURL.lowercased())" })
         let second = SignalStore(stateURL: stateURL)
 
-        #expect(first.sources.count == 17)
+        #expect(first.sources.count == 19)
         #expect(firstKeys.count == first.sources.count)
         #expect(first.sources.filter { $0.sourceKind == .x }.isEmpty)
-        #expect(first.sources.filter { $0.sourceKind == .mediaSearch }.count == 11)
+        #expect(first.sources.filter { $0.sourceKind == .mediaSearch }.count == 12)
         #expect(second.sources.count == first.sources.count)
+    }
+
+    @Test @MainActor
+    func addsRayDalioToExistingLongFormCatalog() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let stateURL = directory.appending(path: "state.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let snapshot = AppSnapshot(
+            sources: TrackedSource.starterSources,
+            events: [],
+            lastRefreshAt: nil,
+            installedCatalogIDs: ["ai-robotics-longform-v4", "signal-domains-v3"]
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(snapshot).write(to: stateURL)
+
+        let migrated = SignalStore(stateURL: stateURL)
+        let raySources = migrated.sources.filter {
+            $0.name.localizedCaseInsensitiveContains("Ray Dalio")
+        }
+
+        #expect(raySources.count == 2)
+        #expect(raySources.contains { $0.sourceKind == .mediaSearch })
+        #expect(raySources.contains { $0.sourceKind == .rss })
     }
 
     @Test @MainActor

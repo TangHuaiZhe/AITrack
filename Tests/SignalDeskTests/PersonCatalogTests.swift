@@ -8,20 +8,35 @@ struct PersonCatalogTests {
         let sources = people.flatMap { $0.trackedSources() }
         let sourceKeys = Set(sources.map { "\($0.sourceKind.rawValue)|\($0.feedURL.lowercased())" })
 
-        #expect(people.count == 11)
-        #expect(sources.count == 16)
+        #expect(people.count == 12)
+        #expect(sources.count == 18)
         #expect(sourceKeys.count == sources.count)
         #expect(people.contains { $0.id == "elon-musk" })
         #expect(people.contains { $0.id == "wang-xingxing" })
         #expect(people.contains { $0.id == "satya-nadella" })
+        #expect(people.contains { $0.id == "ray-dalio" })
     }
 
     @Test func usesMediaSearchAndPublicFeedsWithoutX() {
         let sources = PersonPreset.aiRoboticsLeaders.flatMap { $0.trackedSources() }
 
         #expect(sources.filter { $0.sourceKind == .x }.isEmpty)
-        #expect(sources.filter { $0.sourceKind == .mediaSearch }.count == 11)
+        #expect(sources.filter { $0.sourceKind == .mediaSearch }.count == 12)
         #expect(sources.filter { $0.sourceKind == .rss }.allSatisfy { $0.isEnabled })
+    }
+
+    @Test func tracksRayDalioLongFormAndOfficialVideo() throws {
+        let rayDalio = try #require(
+            PersonPreset.aiRoboticsLeaders.first { $0.id == "ray-dalio" }
+        )
+        let sources = rayDalio.trackedSources()
+
+        #expect(rayDalio.defaultDomains == [.investmentBusiness])
+        #expect(sources.count == 2)
+        #expect(sources.contains { $0.sourceKind == .mediaSearch })
+        #expect(sources.contains {
+            $0.feedURL == "https://www.youtube.com/feeds/videos.xml?channel_id=UCqvaXJ1K3HheTPNjH-KpwXQ"
+        })
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TRACKAI_LIVE_MEDIA_TEST"] == "1"))

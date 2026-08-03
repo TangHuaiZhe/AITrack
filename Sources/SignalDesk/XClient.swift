@@ -1,91 +1,308 @@
 import Foundation
 import Security
 
+enum XProvider: String, CaseIterable, Identifiable {
+    case twitterAPIIO
+    case brightData
+
+    static let defaultsKey = "x-data-provider"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .twitterAPIIO: "TwitterAPI.io"
+        case .brightData: "Bright Data"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .twitterAPIIO:
+            "按返回的 Post 计费，适合高频增量刷新。"
+        case .brightData:
+            "按成功返回的记录计费，适合批量刷新；每次请求最多查询 20 个账号。"
+        }
+    }
+
+    var apiKey: String? {
+        switch self {
+        case .twitterAPIIO: KeychainStore.twitterAPIIOKey
+        case .brightData: KeychainStore.brightDataAPIKey
+        }
+    }
+
+    var signupURL: URL {
+        switch self {
+        case .twitterAPIIO: URL(string: "https://twitterapi.io")!
+        case .brightData: URL(string: "https://brightdata.com/products/web-scraper/twitter")!
+        }
+    }
+
+    static var selected: XProvider {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey)
+        return raw.flatMap(XProvider.init(rawValue:)) ?? .twitterAPIIO
+    }
+}
+
 enum XError: LocalizedError {
-    case missingToken
+    case missingAPIKey(String)
     case invalidUsername
-    case userNotFound
 
     var errorDescription: String? {
         switch self {
-        case .missingToken: "尚未在设置中保存 X API Bearer Token"
+        case .missingAPIKey(let provider): "尚未在设置中保存 \(provider) API Key"
         case .invalidUsername: "X 用户名无效"
-        case .userNotFound: "X API 未返回该用户"
         }
     }
 }
 
 struct XClient {
+    private static let brightDataBatchSize = 20
+    private static let brightDataDatasetID = "gd_lwxkxvnf1cynvib9co"
+
+    var provider: XProvider = .selected
+
     func fetch(_ source: TrackedSource) async throws -> [SignalEvent] {
-        guard let token = KeychainStore.xBearerToken, !token.isEmpty else {
-            throw XError.missingToken
-        }
-        let username = source.feedURL.trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-        guard !username.isEmpty,
-              let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
-            throw XError.invalidUsername
-        }
-
-        let lookupURL = URL(string: "https://api.x.com/2/users/by/username/\(encodedUsername)")!
-        let lookupData = try await request(lookupURL, token: token)
-        guard let user = try JSONDecoder().decode(XUserResponse.self, from: lookupData).data else {
-            throw XError.userNotFound
-        }
-
-        var components = URLComponents(string: "https://api.x.com/2/users/\(user.id)/tweets")!
-        components.queryItems = [
-            URLQueryItem(name: "max_results", value: "20"),
-            URLQueryItem(name: "exclude", value: "retweets,replies"),
-            URLQueryItem(name: "tweet.fields", value: "created_at,public_metrics")
-        ]
-        let timelineData = try await request(components.url!, token: token)
-        return try events(from: timelineData, user: user, source: source)
+        let result = try await fetch([source])
+        return result[source.id] ?? []
     }
 
-    func events(from data: Data, user: XUser, source: TrackedSource) throws -> [SignalEvent] {
-        let timeline = try JSONDecoder.xAPI.decode(XTimelineResponse.self, from: data)
-        return (timeline.data ?? []).map { post in
-            let base = ImportanceScorer.score(text: post.text, topics: source.topics, kind: .x)
-            let engagement = post.publicMetrics.map {
-                min(($0.likeCount / 1_000) + ($0.retweetCount / 250) + ($0.quoteCount / 100), 18)
-            } ?? 0
-            return SignalEvent(
-                id: "\(source.id.uuidString)|x|\(post.id)",
-                sourceID: source.id,
-                sourceName: source.name,
-                title: post.text.replacingOccurrences(of: "\n", with: " ").prefixText(120),
-                summary: engagementSummary(post.publicMetrics),
-                url: "https://x.com/\(user.username)/status/\(post.id)",
+    func fetch(_ sources: [TrackedSource]) async throws -> [UUID: [SignalEvent]] {
+        switch provider {
+        case .twitterAPIIO:
+            var result: [UUID: [SignalEvent]] = [:]
+            for source in sources {
+                result[source.id] = try await fetchTwitterAPIIO(source)
+            }
+            return result
+        case .brightData:
+            return try await fetchBrightData(sources)
+        }
+    }
+
+    func events(
+        from data: Data,
+        username: String,
+        source: TrackedSource
+    ) throws -> [SignalEvent] {
+        let response = try JSONDecoder.xData.decode(TwitterAPIIOResponse.self, from: data)
+        return (response.tweets ?? []).map { post in
+            event(
+                id: post.id,
+                text: post.text,
+                username: username,
+                url: "https://x.com/\(username)/status/\(post.id)",
                 publishedAt: post.createdAt ?? Date(),
-                category: .viewpoint,
-                importance: min(base + engagement, 100),
-                matchedTopics: ImportanceScorer.matchedTopics(in: post.text, topics: source.topics),
-                domains: SignalDomainClassifier.classify(
-                    text: post.text,
-                    fallbackDomains: PersonPreset.defaultDomains(for: source),
-                    kind: .x
-                )
+                metrics: post.metrics,
+                providerName: XProvider.twitterAPIIO.title,
+                source: source
             )
         }
     }
 
-    func validateToken(_ token: String) async throws {
-        let url = URL(string: "https://api.x.com/2/users/by/username/XDevelopers")!
-        _ = try await request(url, token: token)
+    func brightDataEvents(
+        from data: Data,
+        sources: [TrackedSource]
+    ) throws -> [UUID: [SignalEvent]] {
+        let posts = try JSONDecoder.xData.decode([BrightDataPost].self, from: data)
+        var result: [UUID: [SignalEvent]] = [:]
+
+        for source in sources {
+            let username = try normalizedUsername(for: source)
+            let cutoff = source.lastCheckedAt?.addingTimeInterval(-5 * 60)
+            let matching = posts
+                .filter { post in
+                    guard post.userPosted?.caseInsensitiveCompare(username) == .orderedSame,
+                          let id = post.id,
+                          let text = post.description,
+                          !id.isEmpty,
+                          !text.isEmpty,
+                          !post.isRetweetPost,
+                          !post.isReplyPost else {
+                        return false
+                    }
+                    if let cutoff, let date = post.datePosted, date < cutoff {
+                        return false
+                    }
+                    return true
+                }
+                .sorted { ($0.datePosted ?? .distantPast) > ($1.datePosted ?? .distantPast) }
+                .prefix(20)
+
+            result[source.id] = matching.compactMap { post in
+                guard let id = post.id,
+                      let text = post.description else {
+                    return nil
+                }
+                let metrics = XPost.PublicMetrics(
+                    retweetCount: post.reposts ?? 0,
+                    replyCount: post.replies ?? 0,
+                    likeCount: post.likes ?? 0,
+                    quoteCount: post.quotes ?? 0
+                )
+                return event(
+                    id: id,
+                    text: text,
+                    username: username,
+                    url: post.url ?? "https://x.com/\(username)/status/\(id)",
+                    publishedAt: post.datePosted ?? Date(),
+                    metrics: metrics,
+                    providerName: XProvider.brightData.title,
+                    source: source
+                )
+            }
+        }
+        return result
     }
 
-    private func request(_ url: URL, token: String) async throws -> Data {
+    func validateAPIKey(_ apiKey: String) async throws {
+        switch provider {
+        case .twitterAPIIO:
+            _ = try await twitterAPIIORequest(
+                Self.searchURL(username: "XDevelopers"),
+                apiKey: apiKey
+            )
+        case .brightData:
+            var request = URLRequest(
+                url: URL(string: "https://api.brightdata.com/datasets/list")!
+            )
+            request.timeoutInterval = 20
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            _ = try await responseData(for: request)
+        }
+    }
+
+    static func searchURL(username: String, lastCheckedAt: Date? = nil) -> URL {
+        var query = "from:\(username) -filter:replies -filter:retweets"
+        if let lastCheckedAt {
+            let overlap = lastCheckedAt.addingTimeInterval(-5 * 60)
+            query += " since_time:\(Int(overlap.timeIntervalSince1970))"
+        }
+        var components = URLComponents(
+            string: "https://api.twitterapi.io/twitter/tweet/advanced_search"
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "queryType", value: "Latest")
+        ]
+        return components.url!
+    }
+
+    static var brightDataURL: URL {
+        var components = URLComponents(
+            string: "https://api.brightdata.com/datasets/v3/scrape"
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "dataset_id", value: brightDataDatasetID),
+            URLQueryItem(name: "type", value: "discover_new"),
+            URLQueryItem(name: "discover_by", value: "profiles_array"),
+            URLQueryItem(name: "include_errors", value: "true")
+        ]
+        return components.url!
+    }
+
+    private func fetchTwitterAPIIO(_ source: TrackedSource) async throws -> [SignalEvent] {
+        guard let apiKey = KeychainStore.twitterAPIIOKey, !apiKey.isEmpty else {
+            throw XError.missingAPIKey(XProvider.twitterAPIIO.title)
+        }
+        let username = try normalizedUsername(for: source)
+        let data = try await twitterAPIIORequest(
+            Self.searchURL(username: username, lastCheckedAt: source.lastCheckedAt),
+            apiKey: apiKey
+        )
+        return try events(from: data, username: username, source: source)
+    }
+
+    private func fetchBrightData(
+        _ sources: [TrackedSource]
+    ) async throws -> [UUID: [SignalEvent]] {
+        guard let apiKey = KeychainStore.brightDataAPIKey, !apiKey.isEmpty else {
+            throw XError.missingAPIKey(XProvider.brightData.title)
+        }
+        guard !sources.isEmpty else { return [:] }
+
+        var result: [UUID: [SignalEvent]] = [:]
+        for start in stride(from: 0, to: sources.count, by: Self.brightDataBatchSize) {
+            let end = min(start + Self.brightDataBatchSize, sources.count)
+            let batch = Array(sources[start..<end])
+            let inputs = try batch.map {
+                let username = try normalizedUsername(for: $0)
+                return BrightDataRequest.Input(url: "https://x.com/\(username)")
+            }
+            let body = try JSONEncoder().encode(BrightDataRequest(input: inputs))
+            var request = URLRequest(url: Self.brightDataURL)
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.timeoutInterval = 120
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            let data = try await responseData(for: request)
+            let batchResult = try brightDataEvents(from: data, sources: batch)
+            result.merge(batchResult) { _, new in new }
+        }
+        return result
+    }
+
+    private func normalizedUsername(for source: TrackedSource) throws -> String {
+        let username = source.feedURL.trimmingCharacters(in: CharacterSet(charactersIn: "@ "))
+        guard !username.isEmpty else { throw XError.invalidUsername }
+        return username
+    }
+
+    private func twitterAPIIORequest(_ url: URL, apiKey: String) async throws -> Data {
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        return try await responseData(for: request)
+    }
+
+    private func responseData(for request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw FeedError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw FeedError.http(http.statusCode) }
         return data
     }
 
-    private func engagementSummary(_ metrics: XPost.PublicMetrics?) -> String {
-        guard let metrics else { return "来自 X 官方 API" }
+    private func event(
+        id: String,
+        text: String,
+        username: String,
+        url: String,
+        publishedAt: Date,
+        metrics: XPost.PublicMetrics?,
+        providerName: String,
+        source: TrackedSource
+    ) -> SignalEvent {
+        let base = ImportanceScorer.score(text: text, topics: source.topics, kind: .x)
+        let engagement = metrics.map {
+            min(($0.likeCount / 1_000) + ($0.retweetCount / 250) + ($0.quoteCount / 100), 18)
+        } ?? 0
+        return SignalEvent(
+            id: "\(source.id.uuidString)|x|\(id)",
+            sourceID: source.id,
+            sourceName: source.name,
+            title: text.replacingOccurrences(of: "\n", with: " ").prefixText(120),
+            summary: engagementSummary(metrics, providerName: providerName),
+            url: url,
+            publishedAt: publishedAt,
+            category: .viewpoint,
+            importance: min(base + engagement, 100),
+            matchedTopics: ImportanceScorer.matchedTopics(in: text, topics: source.topics),
+            domains: SignalDomainClassifier.classify(
+                text: text,
+                fallbackDomains: PersonPreset.defaultDomains(for: source),
+                kind: .x
+            )
+        )
+    }
+
+    private func engagementSummary(
+        _ metrics: XPost.PublicMetrics?,
+        providerName: String
+    ) -> String {
+        guard let metrics else { return "来自 \(providerName)" }
         return "喜欢 \(metrics.likeCount.formatted()) · 转发 \(metrics.retweetCount.formatted()) · 回复 \(metrics.replyCount.formatted()) · 引用 \(metrics.quoteCount.formatted())"
     }
 }
@@ -93,9 +310,14 @@ struct XClient {
 enum KeychainStore {
     private static let service = "com.tanghuaizhe.trackai"
 
-    static var xBearerToken: String? {
-        get { read(account: "x-api-bearer-token") }
-        set { write(newValue, account: "x-api-bearer-token") }
+    static var twitterAPIIOKey: String? {
+        get { read(account: "twitterapi-io-api-key") }
+        set { write(newValue, account: "twitterapi-io-api-key") }
+    }
+
+    static var brightDataAPIKey: String? {
+        get { read(account: "bright-data-api-key") }
+        set { write(newValue, account: "bright-data-api-key") }
     }
 
     static var deepSeekAPIKey: String? {
@@ -139,24 +361,64 @@ enum KeychainStore {
     }
 }
 
-struct XUserResponse: Decodable {
-    var data: XUser?
+private struct BrightDataRequest: Encodable {
+    var input: [Input]
+
+    struct Input: Encodable {
+        var url: String
+    }
 }
 
-struct XUser: Decodable {
-    var id: String
-    var username: String
+private struct BrightDataPost: Decodable {
+    var id: String?
+    var userPosted: String?
+    var description: String?
+    var datePosted: Date?
+    var url: String?
+    var replies: Int?
+    var reposts: Int?
+    var likes: Int?
+    var quotes: Int?
+    var parentPostDetails: ParentPostDetails?
+
+    var isRetweetPost: Bool {
+        description?.hasPrefix("RT @") == true
+    }
+
+    var isReplyPost: Bool {
+        guard let parentID = parentPostDetails?.postId, let id else { return false }
+        return parentID != id
+    }
+
+    struct ParentPostDetails: Decodable {
+        var postId: String?
+    }
 }
 
-struct XTimelineResponse: Decodable {
-    var data: [XPost]?
+private struct TwitterAPIIOResponse: Decodable {
+    var tweets: [XPost]?
 }
 
-struct XPost: Decodable {
+private struct XPost: Decodable {
     var id: String
     var text: String
     var createdAt: Date?
-    var publicMetrics: PublicMetrics?
+    var retweetCount: Int?
+    var replyCount: Int?
+    var likeCount: Int?
+    var quoteCount: Int?
+
+    var metrics: PublicMetrics? {
+        guard retweetCount != nil || replyCount != nil || likeCount != nil || quoteCount != nil else {
+            return nil
+        }
+        return PublicMetrics(
+            retweetCount: retweetCount ?? 0,
+            replyCount: replyCount ?? 0,
+            likeCount: likeCount ?? 0,
+            quoteCount: quoteCount ?? 0
+        )
+    }
 
     struct PublicMetrics: Decodable {
         var retweetCount: Int
@@ -167,7 +429,7 @@ struct XPost: Decodable {
 }
 
 private extension JSONDecoder {
-    static var xAPI: JSONDecoder {
+    static var xData: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -177,18 +439,16 @@ private extension JSONDecoder {
             if let date = fractional.date(from: value) { return date }
             let standard = ISO8601DateFormatter()
             if let date = standard.date(from: value) { return date }
+            let twitter = DateFormatter()
+            twitter.locale = Locale(identifier: "en_US_POSIX")
+            twitter.dateFormat = "EEE MMM dd HH:mm:ss Z yyyy"
+            if let date = twitter.date(from: value) { return date }
             throw DecodingError.dataCorruptedError(
                 in: try decoder.singleValueContainer(),
-                debugDescription: "Invalid X API ISO-8601 date: \(value)"
+                debugDescription: "Invalid X data date: \(value)"
             )
         }
         return decoder
-    }
-}
-
-private extension Substring {
-    func prefixText(_ length: Int) -> String {
-        String(prefix(length))
     }
 }
 
