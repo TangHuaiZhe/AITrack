@@ -70,12 +70,6 @@ struct XClientTests {
             "parent_post_details": { "post_id": "100" }
           },
           {
-            "id": "101",
-            "user_posted": "another_user",
-            "description": "This belongs to another account.",
-            "date_posted": "2026-08-04T08:20:00Z"
-          },
-          {
             "id": "102",
             "user_posted": "example",
             "description": "This is a reply.",
@@ -84,12 +78,13 @@ struct XClientTests {
           }
         ]
         """
-        let source = TrackedSource.x(
+        var source = TrackedSource.x(
             name: "Example Founder",
             role: "AI founder",
             username: "example",
             topics: ["AI", "robotics"]
         )
+        source.lastCheckedAt = Date()
 
         let result = try XClient(provider: .brightData).brightDataEvents(
             from: Data(json.utf8),
@@ -114,5 +109,54 @@ struct XClientTests {
         #expect(components.queryItems?.first(where: { $0.name == "dataset_id" })?.value == "gd_lwxkxvnf1cynvib9co")
         #expect(components.queryItems?.first(where: { $0.name == "type" })?.value == "discover_new")
         #expect(components.queryItems?.first(where: { $0.name == "discover_by" })?.value == "profiles_array")
+        #expect(components.queryItems?.first(where: { $0.name == "limit_per_input" })?.value == "20")
+    }
+
+    @Test func buildsBrightDataProfilesArrayRequest() throws {
+        let body = try XClient.brightDataRequestBody(usernames: ["karpathy", "RayDalio"])
+        let json = try #require(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        let inputs = try #require(json["input"] as? [[String: Any]])
+
+        #expect(inputs.count == 1)
+        #expect(inputs[0]["urls"] as? [String] == [
+            "https://x.com/karpathy",
+            "https://x.com/RayDalio"
+        ])
+        #expect(inputs[0]["url"] == nil)
+    }
+
+    @Test func buildsBrightDataSnapshotURLs() {
+        let progress = XClient.brightDataProgressURL(snapshotID: "sd_example")
+        let snapshot = XClient.brightDataSnapshotURL(snapshotID: "sd_example")
+        let components = URLComponents(url: snapshot, resolvingAgainstBaseURL: false)
+
+        #expect(progress.absoluteString == "https://api.brightdata.com/datasets/v3/progress/sd_example")
+        #expect(snapshot.path == "/datasets/v3/snapshot/sd_example")
+        #expect(components?.queryItems?.first(where: { $0.name == "format" })?.value == "json")
+    }
+
+    @Test func decodesBrightDataSnapshotEnvelope() throws {
+        let data = Data(#"{"snapshot_id":"sd_example","message":"still running"}"#.utf8)
+
+        #expect(try XClient.brightDataSnapshotID(from: data) == "sd_example")
+    }
+
+    @Test func surfacesBrightDataCrawlerError() throws {
+        let data = Data(#"[{"error":"Crawler error: selector timeout"}]"#.utf8)
+        let source = TrackedSource.x(
+            name: "Example",
+            role: "AI",
+            username: "example",
+            topics: ["AI"]
+        )
+
+        #expect(throws: XError.self) {
+            try XClient(provider: .brightData).brightDataEvents(
+                from: data,
+                sources: [source]
+            )
+        }
     }
 }

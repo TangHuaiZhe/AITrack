@@ -112,6 +112,14 @@ struct AISummary: Codable, Hashable {
     var content: String
     var provider: AISummaryProvider
     var generatedAt: Date
+
+    var isDetailedFormat: Bool {
+        [
+            "# 关键事实与数据",
+            "# 主要观点与论证链",
+            "# 原文覆盖说明"
+        ].allSatisfy(content.contains)
+    }
 }
 
 enum AISummaryProvider: String, Codable, CaseIterable, Identifiable {
@@ -151,12 +159,15 @@ struct AppSnapshot: Codable {
     var events: [SignalEvent]
     var lastRefreshAt: Date?
     var installedCatalogIDs: [String]? = nil
+    var dailyBrief: DailyBrief? = nil
 }
 
 enum AppSection: String, CaseIterable, Identifiable {
     case inbox
+    case xFeed
     case highValue
     case bookmarks
+    case dailyBrief
     case investors
     case sources
     case settings
@@ -166,8 +177,10 @@ enum AppSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .inbox: "情报流"
+        case .xFeed: "X 情报"
         case .highValue: "高价值"
         case .bookmarks: "已收藏"
+        case .dailyBrief: "每日快报"
         case .investors: "杰出投资者"
         case .sources: "监控对象"
         case .settings: "设置"
@@ -177,8 +190,10 @@ enum AppSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .inbox: "rectangle.stack.fill"
+        case .xFeed: "at.circle.fill"
         case .highValue: "sparkles"
         case .bookmarks: "bookmark.fill"
+        case .dailyBrief: "newspaper.fill"
         case .investors: "chart.pie.fill"
         case .sources: "person.2.fill"
         case .settings: "gearshape.fill"

@@ -48,11 +48,19 @@ enum XProvider: String, CaseIterable, Identifiable {
 enum XError: LocalizedError {
     case missingAPIKey(String)
     case invalidUsername
+    case brightDataJobFailed
+    case brightDataTimeout
+    case invalidBrightDataResponse
+    case brightDataCrawler(String)
 
     var errorDescription: String? {
         switch self {
         case .missingAPIKey(let provider): "尚未在设置中保存 \(provider) API Key"
         case .invalidUsername: "X 用户名无效"
+        case .brightDataJobFailed: "Bright Data 抓取任务失败"
+        case .brightDataTimeout: "Bright Data 抓取时间过长，请稍后重试"
+        case .invalidBrightDataResponse: "Bright Data 返回了无法识别的响应"
+        case .brightDataCrawler(let message): "Bright Data 抓取失败：\(message)"
         }
     }
 }
@@ -106,11 +114,14 @@ struct XClient {
         sources: [TrackedSource]
     ) throws -> [UUID: [SignalEvent]] {
         let posts = try JSONDecoder.xData.decode([BrightDataPost].self, from: data)
+        let validPosts = posts.filter { $0.id != nil && $0.description != nil }
+        if validPosts.isEmpty, let error = posts.compactMap(\.error).first {
+            throw XError.brightDataCrawler(error.prefixText(240))
+        }
         var result: [UUID: [SignalEvent]] = [:]
 
         for source in sources {
             let username = try normalizedUsername(for: source)
-            let cutoff = source.lastCheckedAt?.addingTimeInterval(-5 * 60)
             let matching = posts
                 .filter { post in
                     guard post.userPosted?.caseInsensitiveCompare(username) == .orderedSame,
@@ -120,9 +131,6 @@ struct XClient {
                           !text.isEmpty,
                           !post.isRetweetPost,
                           !post.isReplyPost else {
-                        return false
-                    }
-                    if let cutoff, let date = post.datePosted, date < cutoff {
                         return false
                     }
                     return true
@@ -197,9 +205,34 @@ struct XClient {
             URLQueryItem(name: "dataset_id", value: brightDataDatasetID),
             URLQueryItem(name: "type", value: "discover_new"),
             URLQueryItem(name: "discover_by", value: "profiles_array"),
-            URLQueryItem(name: "include_errors", value: "true")
+            URLQueryItem(name: "include_errors", value: "true"),
+            URLQueryItem(name: "limit_per_input", value: "20")
         ]
         return components.url!
+    }
+
+    static func brightDataRequestBody(usernames: [String]) throws -> Data {
+        try JSONEncoder().encode(
+            BrightDataRequest(
+                input: [.init(urls: usernames.map { "https://x.com/\($0)" })]
+            )
+        )
+    }
+
+    static func brightDataProgressURL(snapshotID: String) -> URL {
+        URL(string: "https://api.brightdata.com/datasets/v3/progress/\(snapshotID)")!
+    }
+
+    static func brightDataSnapshotURL(snapshotID: String) -> URL {
+        var components = URLComponents(
+            string: "https://api.brightdata.com/datasets/v3/snapshot/\(snapshotID)"
+        )!
+        components.queryItems = [URLQueryItem(name: "format", value: "json")]
+        return components.url!
+    }
+
+    static func brightDataSnapshotID(from data: Data) throws -> String {
+        try JSONDecoder.xData.decode(BrightDataSnapshot.self, from: data).snapshotId
     }
 
     private func fetchTwitterAPIIO(_ source: TrackedSource) async throws -> [SignalEvent] {
@@ -226,11 +259,8 @@ struct XClient {
         for start in stride(from: 0, to: sources.count, by: Self.brightDataBatchSize) {
             let end = min(start + Self.brightDataBatchSize, sources.count)
             let batch = Array(sources[start..<end])
-            let inputs = try batch.map {
-                let username = try normalizedUsername(for: $0)
-                return BrightDataRequest.Input(url: "https://x.com/\(username)")
-            }
-            let body = try JSONEncoder().encode(BrightDataRequest(input: inputs))
+            let usernames = try batch.map(normalizedUsername)
+            let body = try Self.brightDataRequestBody(usernames: usernames)
             var request = URLRequest(url: Self.brightDataURL)
             request.httpMethod = "POST"
             request.httpBody = body
@@ -238,11 +268,54 @@ struct XClient {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            let data = try await responseData(for: request)
+            let (initialData, response) = try await response(for: request)
+            let data: Data
+            if response.statusCode == 202 {
+                guard let snapshotID = try? Self.brightDataSnapshotID(from: initialData) else {
+                    throw XError.invalidBrightDataResponse
+                }
+                data = try await waitForBrightDataSnapshot(snapshotID, apiKey: apiKey)
+            } else {
+                data = initialData
+            }
             let batchResult = try brightDataEvents(from: data, sources: batch)
             result.merge(batchResult) { _, new in new }
         }
         return result
+    }
+
+    private func waitForBrightDataSnapshot(
+        _ snapshotID: String,
+        apiKey: String
+    ) async throws -> Data {
+        for _ in 0..<300 {
+            try Task.checkCancellation()
+            var progressRequest = URLRequest(
+                url: Self.brightDataProgressURL(snapshotID: snapshotID)
+            )
+            progressRequest.timeoutInterval = 20
+            progressRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            let progressData = try await responseData(for: progressRequest)
+            let progress = try JSONDecoder.xData.decode(
+                BrightDataSnapshotProgress.self,
+                from: progressData
+            )
+
+            switch progress.status.lowercased() {
+            case "ready":
+                var downloadRequest = URLRequest(
+                    url: Self.brightDataSnapshotURL(snapshotID: snapshotID)
+                )
+                downloadRequest.timeoutInterval = 60
+                downloadRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                return try await responseData(for: downloadRequest)
+            case "failed":
+                throw XError.brightDataJobFailed
+            default:
+                try await Task.sleep(for: .seconds(2))
+            }
+        }
+        throw XError.brightDataTimeout
     }
 
     private func normalizedUsername(for source: TrackedSource) throws -> String {
@@ -259,10 +332,14 @@ struct XClient {
     }
 
     private func responseData(for request: URLRequest) async throws -> Data {
+        try await response(for: request).0
+    }
+
+    private func response(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw FeedError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw FeedError.http(http.statusCode) }
-        return data
+        return (data, http)
     }
 
     private func event(
@@ -365,8 +442,16 @@ private struct BrightDataRequest: Encodable {
     var input: [Input]
 
     struct Input: Encodable {
-        var url: String
+        var urls: [String]
     }
+}
+
+private struct BrightDataSnapshot: Decodable {
+    var snapshotId: String
+}
+
+private struct BrightDataSnapshotProgress: Decodable {
+    var status: String
 }
 
 private struct BrightDataPost: Decodable {
@@ -380,6 +465,7 @@ private struct BrightDataPost: Decodable {
     var likes: Int?
     var quotes: Int?
     var parentPostDetails: ParentPostDetails?
+    var error: String?
 
     var isRetweetPost: Bool {
         description?.hasPrefix("RT @") == true

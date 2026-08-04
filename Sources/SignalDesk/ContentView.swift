@@ -18,6 +18,8 @@ struct ContentView: View {
         } content: {
             if section == .sources {
                 SourcesView(showingAddSource: $showingAddSource)
+            } else if section == .dailyBrief {
+                DailyBriefIndexView()
             } else if section == .investors {
                 InvestorListView(selection: $selectedInvestorID)
             } else if section == .settings {
@@ -32,14 +34,37 @@ struct ContentView: View {
         .sheet(isPresented: $showingAddSource) {
             AddSourceView()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .signalDeskOpenSettings)) { _ in
+            section = .settings
+            selection = nil
+            selectedTopic = nil
+        }
         .task {
             await store.refresh()
+            await store.generateDailyBriefIfNeeded()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(900))
+                try? await Task.sleep(for: .seconds(secondsUntilNextBriefCheck()))
                 guard !Task.isCancelled else { break }
                 await store.refresh()
+                await store.generateDailyBriefIfNeeded()
             }
         }
+    }
+
+    private func secondsUntilNextBriefCheck(now: Date = Date()) -> Double {
+        let calendar = Calendar.current
+        guard let todayAtEight = calendar.date(
+            bySettingHour: 8,
+            minute: 0,
+            second: 0,
+            of: now
+        ) else {
+            return 900
+        }
+        if now < todayAtEight {
+            return max(60, min(900, todayAtEight.timeIntervalSince(now)))
+        }
+        return 900
     }
 
     private var sidebar: some View {
@@ -204,6 +229,8 @@ struct ContentView: View {
                 Color(nsColor: .controlBackgroundColor)
                 InvestorPortfolioView(investorID: selectedInvestorID)
             }
+        } else if section == .dailyBrief {
+            DailyBriefView()
         } else if let event = selectedEvent {
             EventDetail(event: event)
                 .onChange(of: event.id, initial: true) { _, eventID in
@@ -230,6 +257,7 @@ struct ContentView: View {
         store.events.filter { event in
             let sectionMatches: Bool
             switch section {
+            case .xFeed: sectionMatches = xSourceIDs.contains(event.sourceID)
             case .highValue: sectionMatches = event.importance >= 75
             case .bookmarks: sectionMatches = event.isBookmarked
             default: sectionMatches = true
@@ -244,17 +272,27 @@ struct ContentView: View {
     }
 
     private var refreshSubtitle: String {
+        let activeSourceCount = section == .xFeed
+            ? store.sources.filter { $0.sourceKind == .x && $0.isEnabled }.count
+            : store.sources.filter(\.isEnabled).count
         if let date = store.lastRefreshAt {
-            return "上次刷新 \(date.formatted(date: .omitted, time: .shortened)) · \(store.sources.filter(\.isEnabled).count) 个活跃来源"
+            return "上次刷新 \(date.formatted(date: .omitted, time: .shortened)) · \(activeSourceCount) 个活跃来源"
         }
-        return "\(store.sources.filter(\.isEnabled).count) 个活跃来源"
+        return "\(activeSourceCount) 个活跃来源"
+    }
+
+    private var xSourceIDs: Set<UUID> {
+        Set(store.sources.filter { $0.sourceKind == .x }.map(\.id))
     }
 
     private func badgeCount(for item: AppSection) -> Int? {
         switch item {
         case .inbox: store.unreadCount
+        case .xFeed:
+            store.events.filter { xSourceIDs.contains($0.sourceID) && !$0.isRead }.count
         case .highValue: store.highValueCount
         case .bookmarks: store.events.filter(\.isBookmarked).count
+        case .dailyBrief: nil
         case .investors: InvestorPreset.featured.count
         case .sources: store.sources.count
         case .settings: nil
@@ -438,14 +476,14 @@ private struct EventDetail: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("AI 情报总结", systemImage: "sparkles")
+                        Label("AI 情报总结（详细版）", systemImage: "sparkles")
                             .font(.headline)
                         Spacer()
                         if let summary = event.aiSummary {
                             Text(summary.provider.title)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Button("重新生成") {
+                            Button(summary.isDetailedFormat ? "重新生成详细版" : "生成详细版") {
                                 store.clearSummary(for: event.id)
                                 Task { await generateSummary() }
                             }
@@ -455,6 +493,11 @@ private struct EventDetail: View {
                     }
 
                     if let summary = event.aiSummary {
+                        if !summary.isDetailedFormat {
+                            Label("这是旧版简摘要，点击上方按钮可按完整材料重新生成。", systemImage: "info.circle")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                         MarkdownText(summary.content)
                             .font(.body)
                             .lineSpacing(6)
@@ -481,7 +524,7 @@ private struct EventDetail: View {
                         Button {
                             Task { await generateSummary() }
                         } label: {
-                            Label("生成 AI 总结", systemImage: "sparkles")
+                            Label("生成详细 AI 总结", systemImage: "sparkles")
                         }
                     }
                 }
@@ -504,6 +547,13 @@ private struct EventDetail: View {
             .padding(28)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .task(id: event.id) {
+            guard event.importance >= AISummaryService.automaticSummaryImportanceThreshold,
+                  event.aiSummary == nil else {
+                return
+            }
+            await generateSummary()
+        }
     }
 
     @MainActor

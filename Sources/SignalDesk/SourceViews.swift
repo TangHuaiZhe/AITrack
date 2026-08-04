@@ -4,6 +4,7 @@ struct SourcesView: View {
     @EnvironmentObject private var store: SignalStore
     @Binding var showingAddSource: Bool
     @State private var showingPeopleCatalog = false
+    @State private var showingXBloggerCatalog = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +17,11 @@ struct SourcesView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    showingXBloggerCatalog = true
+                } label: {
+                    Label("X 博主库", systemImage: "at.circle.fill")
+                }
                 Button {
                     showingPeopleCatalog = true
                 } label: {
@@ -74,6 +80,9 @@ struct SourcesView: View {
         }
         .sheet(isPresented: $showingPeopleCatalog) {
             PeopleCatalogView()
+        }
+        .sheet(isPresented: $showingXBloggerCatalog) {
+            XBloggerCatalogView()
         }
     }
 }
@@ -704,5 +713,170 @@ struct PeopleCatalogView: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color.opacity(0.1), in: Capsule())
+    }
+}
+
+struct XBloggerCatalogView: View {
+    @EnvironmentObject private var store: SignalStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var categoryRaw = "all"
+    @State private var selected = Set(
+        XBloggerPreset.catalog.filter(\.isRecommended).map(\.id)
+    )
+
+    private let bloggers = XBloggerPreset.catalog
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("X 博主库")
+                            .font(.title2.weight(.bold))
+                        Text("精选 AI、机器人、芯片与投资领域账号，通过 \(XProvider.selected.title) 追踪公开 Posts。")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("选择核心推荐") {
+                        selected = Set(bloggers.filter(\.isRecommended).map(\.id))
+                    }
+                    Button(allVisibleSelected ? "取消当前分类" : "全选当前分类") {
+                        toggleVisibleSelection()
+                    }
+                }
+
+                Picker("领域", selection: $categoryRaw) {
+                    Text("全部").tag("all")
+                    ForEach(XBloggerCategory.allCases) { category in
+                        Text(category.title).tag(category.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if XProvider.selected.apiKey == nil {
+                    Label("尚未配置 \(XProvider.selected.title) API Key；导入后来源会保持关闭。", systemImage: "key")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Label("核心推荐共 \(bloggers.filter(\.isRecommended).count) 位；可继续增减后批量导入。", systemImage: "checkmark.seal.fill")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                }
+            }
+            .padding(22)
+
+            Divider()
+
+            List(filteredBloggers) { blogger in
+                Button {
+                    toggle(blogger.id)
+                } label: {
+                    HStack(alignment: .top, spacing: 13) {
+                        Image(systemName: selected.contains(blogger.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(selected.contains(blogger.id) ? .blue : .secondary)
+                            .padding(.top, 2)
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 7) {
+                                Text(blogger.name)
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                Text("@\(blogger.username)")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                if blogger.isRecommended {
+                                    badge("核心推荐", color: .blue)
+                                }
+                                badge(blogger.category.title, color: categoryColor(blogger.category))
+                            }
+                            Text(blogger.role)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("追踪：\(blogger.topics.prefix(5).joined(separator: " · "))")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                            if let note = blogger.note {
+                                Text(note)
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.inset)
+
+            Divider()
+
+            HStack {
+                Text("已选择 \(selected.count) / \(bloggers.count) 位")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("批量导入并开始监控") {
+                    let chosen = bloggers.filter { selected.contains($0.id) }
+                    let added = store.importXBloggers(chosen)
+                    dismiss()
+                    if added > 0, XProvider.selected.apiKey != nil {
+                        Task { await store.refresh() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selected.isEmpty)
+            }
+            .padding(18)
+        }
+        .frame(width: 880, height: 720)
+    }
+
+    private var filteredBloggers: [XBloggerPreset] {
+        guard let category = XBloggerCategory(rawValue: categoryRaw) else { return bloggers }
+        return bloggers.filter { $0.category == category }
+    }
+
+    private var allVisibleSelected: Bool {
+        !filteredBloggers.isEmpty && filteredBloggers.allSatisfy { selected.contains($0.id) }
+    }
+
+    private func toggle(_ id: String) {
+        if selected.contains(id) {
+            selected.remove(id)
+        } else {
+            selected.insert(id)
+        }
+    }
+
+    private func toggleVisibleSelection() {
+        let visibleIDs = Set(filteredBloggers.map(\.id))
+        if allVisibleSelected {
+            selected.subtract(visibleIDs)
+        } else {
+            selected.formUnion(visibleIDs)
+        }
+    }
+
+    private func badge(_ title: String, color: Color) -> some View {
+        Text(title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.1), in: Capsule())
+    }
+
+    private func categoryColor(_ category: XBloggerCategory) -> Color {
+        switch category {
+        case .ai: .purple
+        case .robotics: .cyan
+        case .compute: .orange
+        case .investment: .green
+        }
     }
 }

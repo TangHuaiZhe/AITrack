@@ -7,6 +7,8 @@ final class SignalStore: ObservableObject {
     @Published private(set) var sources: [TrackedSource] = []
     @Published private(set) var events: [SignalEvent] = []
     @Published private(set) var lastRefreshAt: Date?
+    @Published private(set) var dailyBrief: DailyBrief?
+    @Published var isGeneratingDailyBrief = false
     @Published var isRefreshing = false
     @Published var statusMessage: String?
 
@@ -46,6 +48,25 @@ final class SignalStore: ObservableObject {
         statusMessage = added == 0
             ? "这些人物已经在监控列表中"
             : "已导入 \(people.count) 位人物的 \(added) 个来源"
+        save()
+        return added
+    }
+
+    @discardableResult
+    func importXBloggers(_ bloggers: [XBloggerPreset], isEnabled: Bool? = nil) -> Int {
+        var keys = Set(sources.map(Self.sourceKey))
+        let enablesX = isEnabled ?? (XProvider.selected.apiKey != nil)
+        var added = 0
+
+        for blogger in bloggers {
+            let source = blogger.trackedSource(isEnabled: enablesX)
+            guard keys.insert(Self.sourceKey(source)).inserted else { continue }
+            sources.append(source)
+            added += 1
+        }
+        statusMessage = added == 0
+            ? "这些 X 博主已经在监控列表中"
+            : "已导入 \(added) 位 X 博主"
         save()
         return added
     }
@@ -99,6 +120,64 @@ final class SignalStore: ObservableObject {
     func markAllRead() {
         for index in events.indices { events[index].isRead = true }
         save()
+    }
+
+    func refreshDailyBrief() async {
+        await refresh()
+        await generateDailyBrief(force: true)
+    }
+
+    func generateDailyBriefIfNeeded(now: Date = Date()) async {
+        let calendar = Calendar.current
+        guard let scheduledAt = calendar.date(
+            bySettingHour: 8,
+            minute: 0,
+            second: 0,
+            of: now
+        ), now >= scheduledAt else {
+            return
+        }
+        let dayID = String(ISO8601DateFormatter().string(from: now).prefix(10))
+        let generatedAt = dailyBrief?.generatedAt ?? .distantPast
+        guard dailyBrief?.id != dayID || generatedAt < scheduledAt else {
+            return
+        }
+        await generateDailyBrief(force: true, now: now)
+    }
+
+    func generateDailyBrief(force: Bool = false, now: Date = Date()) async {
+        guard !isGeneratingDailyBrief else { return }
+        let calendar = Calendar.current
+        let dayID = String(ISO8601DateFormatter().string(from: now).prefix(10))
+        if !force,
+           dailyBrief?.id == dayID,
+           let scheduledAt = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: now),
+           dailyBrief?.generatedAt ?? .distantPast >= scheduledAt {
+            return
+        }
+
+        isGeneratingDailyBrief = true
+        statusMessage = "正在搜索全网新闻并生成每日快报…"
+        defer { isGeneratingDailyBrief = false }
+
+        do {
+            let windowEnd = now
+            let windowStart = now.addingTimeInterval(-24 * 3_600)
+            let recentEvents = events.filter {
+                $0.publishedAt >= windowStart && $0.publishedAt <= windowEnd
+            }
+            let news = try await NewsSearchClient().search(now: now)
+            dailyBrief = try await DailyBriefService().generate(
+                events: recentEvents,
+                news: news,
+                windowStart: windowStart,
+                windowEnd: windowEnd
+            )
+            statusMessage = "每日快报已更新 · (recentEvents.count) 条情报 · (news.count) 条新闻"
+            save()
+        } catch {
+            statusMessage = "每日快报生成失败：(error.localizedDescription)"
+        }
     }
 
     func refresh() async {
@@ -159,7 +238,8 @@ final class SignalStore: ObservableObject {
         if failures.isEmpty {
             statusMessage = added.isEmpty ? "已是最新" : "新增 \(added.count) 条信号"
         } else {
-            statusMessage = "新增 \(added.count) 条；\(failures.count) 个来源失败"
+            let firstFailure = failures.first.map { "；\($0)" } ?? ""
+            statusMessage = "新增 \(added.count) 条；\(failures.count) 个来源失败\(firstFailure)"
         }
         save()
         await notify(for: added.filter { $0.importance >= 80 })
@@ -172,6 +252,7 @@ final class SignalStore: ObservableObject {
             sources = snapshot.sources
             events = Array(snapshot.events.sorted { $0.publishedAt > $1.publishedAt }.prefix(600))
             lastRefreshAt = snapshot.lastRefreshAt
+            dailyBrief = snapshot.dailyBrief
             installedCatalogIDs = Set(snapshot.installedCatalogIDs ?? [])
         } catch {
             sources = TrackedSource.starterSources
@@ -190,7 +271,8 @@ final class SignalStore: ObservableObject {
                 sources: sources,
                 events: events,
                 lastRefreshAt: lastRefreshAt,
-                installedCatalogIDs: Array(installedCatalogIDs).sorted()
+                installedCatalogIDs: Array(installedCatalogIDs).sorted(),
+                dailyBrief: dailyBrief
             )
             let data = try JSONEncoder.signalDesk.encode(snapshot)
             try data.write(to: stateURL, options: .atomic)

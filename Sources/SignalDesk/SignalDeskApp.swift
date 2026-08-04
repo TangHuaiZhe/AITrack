@@ -22,6 +22,17 @@ struct SignalDeskApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
+
+            CommandGroup(replacing: .appSettings) {
+                Button("设置") {
+                    NotificationCenter.default.post(name: .signalDeskOpenSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
+}
+
+extension Notification.Name {
+    static let signalDeskOpenSettings = Notification.Name("SignalDesk.openSettings")
 }

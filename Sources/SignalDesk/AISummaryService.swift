@@ -42,6 +42,7 @@ struct AISummaryService {
     static let modeDefaultsKey = "ai-summary-mode"
     static let ollamaModelDefaultsKey = "ai-summary-ollama-model"
     static let defaultOllamaModel = "qwen3.5:4b"
+    static let automaticSummaryImportanceThreshold = 60
 
     var mode: AISummaryMode {
         AISummaryMode(
@@ -52,8 +53,8 @@ struct AISummaryService {
     func summarize(_ event: SignalEvent) async throws -> AISummary {
         let articleText = await ArticleContentFetcher().content(for: event)
         guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
-        return try await summarize(
-            prompt: Self.prompt(
+        return try await summarizePrompt(
+            Self.prompt(
                 event: event,
                 articleText: Self.truncated(articleText, for: mode)
             )
@@ -67,15 +68,15 @@ struct AISummaryService {
             rawURL: writing.sourceURL
         )
         guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
-        return try await summarize(
-            prompt: Self.writingPrompt(
+        return try await summarizePrompt(
+            Self.writingPrompt(
                 writing: writing,
                 articleText: Self.truncated(articleText, for: mode)
             )
         )
     }
 
-    private func summarize(prompt: String) async throws -> AISummary {
+    func summarizePrompt(_ prompt: String) async throws -> AISummary {
         switch mode {
         case .deepSeek:
             return try await summarizeWithDeepSeek(prompt: prompt)
@@ -169,54 +170,75 @@ struct AISummaryService {
     }
 
     private static let systemInstructions = """
-    你是一名严谨的中文科技与投资情报分析师。只依据给定材料，不补造事实。
-    区分受访者原话、媒体转述与分析推断；材料不足时明确说明。
-    输出简洁中文，不使用 Markdown 表格。
+    你是一名严谨的中文科技与投资情报分析师。你的任务是完整覆盖给定材料，而不是只写几句摘要。
+    只依据给定材料，不补造事实；区分作者/受访者原话、媒体转述与分析推断，材料不足时明确说明。
+    保留材料中的公司名、人名、数字、时间、因果关系和限定条件。输出结构化 Markdown，不使用 Markdown 表格。
     """
 
-    private static func prompt(event: SignalEvent, articleText: String) -> String {
+    static func prompt(event: SignalEvent, articleText: String) -> String {
         """
-        请总结下面这条关于 \(event.sourceName) 的内容。
+        请对下面这条关于 \(event.sourceName) 的材料做一份“完整情报拆解”，不要只给三五句摘要。
+        目标长度约 800–1,500 个中文字符；如果材料很长，按主要段落和主题覆盖，不要只挑开头或最醒目的观点。
+        材料没有明确回答的内容必须写“材料未提及”，不得用常识补全。
 
-        固定输出结构：
-        一句话结论：不超过 60 字
-        核心观点：
-        - 3 至 5 条，每条尽量包含具体事实、数字或时间判断
-        值得追踪的变化：
-        - 相比其既有立场可能出现的新判断；无法判断则写“材料不足”
-        投资/产业信号：
-        - 1 至 3 条，并标注“事实”或“推断”
-        可信度与缺口：
-        - 说明内容是完整正文、节目简介还是其他材料，以及主要信息缺口
+        严格使用下面的 Markdown 结构，并覆盖材料中的每个主要主题：
+        # 一句话结论
+        用 1–2 句说清材料最重要的判断和它的适用条件。
+        # 内容概览
+        用一段话说明材料在讨论什么、由谁提出、面向什么场景；不要重复标题。
+        # 关键事实与数据
+        至少列出 4 条材料明确给出的事实、数字、时间、公司或人物；没有数字时不要编造数字。
+        # 主要观点与论证链
+        按“观点 → 原文依据 → 得出的含义”逐条拆解，至少覆盖 4 个主要观点；区分明确陈述和分析推断。
+        # 时间判断与变化
+        列出材料中的时间表、预测、前后变化和触发条件；没有时间判断则明确写出。
+        # 对行业与投资的影响
+        分别说明对技术路线、产业链、公司经营或投资决策的可能影响，并给每条标注“材料事实”或“分析推断”。
+        # 风险、反例与不确定性
+        列出材料自身承认的风险、尚未解决的问题、可能的反例和信息缺口。
+        # 值得继续跟踪
+        给出 3–5 个可验证的问题或后续信号，说明未来看到什么信息才会支持或推翻当前判断。
+        # 原文覆盖说明
+        说明本次实际依据的是完整正文、网页摘录、节目简介还是标题；指出可能没有被抓取到的部分。
 
         标题：\(event.title)
         来源已有简介：\(event.summary)
-        抓取内容：
+        本次送入模型的材料长度：\(articleText.count) 字
+        抓取内容（请完整覆盖以下材料）：
         \(articleText)
         """
     }
 
-    private static func writingPrompt(
+    static func writingPrompt(
         writing: InvestorWriting,
         articleText: String
     ) -> String {
         """
-        请分析下面这份投资者材料。严格区分作者明确陈述、基金团队陈述和你的推断。
+        请对下面这份投资者材料做一份完整的中文投资分析，不要只给几句摘要。
+        目标长度约 1,000–2,000 个中文字符；按材料的主要章节、主题和论点覆盖全文。
+        严格区分作者明确陈述、基金团队陈述、历史事实和你的推断；材料未提及的内容写“材料未提及”。
 
-        固定输出结构：
-        一句话结论：不超过 60 字
-        核心投资观点：
-        - 3 至 6 条，保留关键数字、估值、时间和条件
-        持仓动作与理由：
-        - 分别列出买入/增持、减持/退出、继续持有；材料未提及则明确写“未提及”
-        相比上一期值得追踪的变化：
-        - 只能依据本材料判断；缺少上期材料时写“需要与上期原文对比”
-        风险、催化剂与反证条件：
-        - 各 1 至 3 条，标注“原文”或“推断”
-        与 13F 的核对提示：
-        - 指出文中提到但仍需用申报持仓核验的公司或动作
-        可信度与缺口：
-        - 说明署名归属、材料是否完整，以及可能缺失的信息
+        严格使用下面的 Markdown 结构，并覆盖材料中的每个主要主题：
+        # 执行摘要
+        用 2–3 句说清这份材料的核心判断、适用条件和最重要的变化。
+        # 材料背景与作者立场
+        说明作者/机构、报告期、写作目的，以及哪些内容是作者明确陈述。
+        # 核心投资观点
+        至少列出 5 条，逐条写出“观点 → 原文依据 → 对估值/经营的含义”；保留关键数字、估值、时间和条件。
+        # 公司、行业与宏观判断
+        覆盖材料提到的主要公司、行业、宏观变量和它们之间的因果关系；不要只写材料最前面的公司。
+        # 持仓动作与资本配置
+        分别列出买入/增持、减持/退出、继续持有、回购/分红或现金配置；每项写理由，材料未提及则明确写出。
+        # 业绩、估值与关键指标
+        汇总材料中的收入、利润、现金流、估值、回报率、目标价或其他量化信息，并保留原单位和时间范围。
+        # 相比上一期的变化
+        只能依据本材料判断；缺少上期材料时写“需要与上期原文对比”，不要臆测变化。
+        # 风险、催化剂与反证条件
+        各列出 2–4 条，并标注“原文”或“推断”；说明什么情况会推翻当前判断。
+        # 与 13F 和后续信息的核对提示
+        指出需要用申报持仓、财报、下一封信或其他来源验证的公司、动作和判断。
+        # 原文覆盖说明
+        说明本次依据的是完整信件、网页摘录还是来源简介，以及可能缺失的章节或数据。
 
         标题：\(writing.title)
         作者：\(writing.author)
@@ -224,7 +246,8 @@ struct AISummaryService {
         归属：\(writing.attribution.title)
         报告期：\(writing.period ?? "未标明")
         来源说明：\(writing.sourceNote)
-        抓取内容：
+        本次送入模型的材料长度：\(articleText.count) 字
+        抓取内容（请完整覆盖以下材料）：
         \(articleText)
         """
     }
@@ -408,7 +431,7 @@ struct DeepSeekClient {
                     .init(role: "user", content: prompt)
                 ],
                 thinking: .init(type: "disabled"),
-                maxTokens: 1_200
+                maxTokens: 2_600
             )
         )
 
@@ -491,7 +514,8 @@ struct OllamaClient {
                     .init(role: "system", content: "你是一名严谨的中文科技与投资情报分析师，只依据材料总结。"),
                     .init(role: "user", content: prompt)
                 ],
-                stream: false
+                stream: false,
+                options: .init(numPredict: 2_600)
             )
         )
 
@@ -574,6 +598,15 @@ private struct OllamaRequest: Encodable {
     var model: String
     var messages: [Message]
     var stream: Bool
+    var options: Options
+
+    struct Options: Encodable {
+        var numPredict: Int
+
+        enum CodingKeys: String, CodingKey {
+            case numPredict = "num_predict"
+        }
+    }
 }
 
 private struct OllamaResponse: Decodable {

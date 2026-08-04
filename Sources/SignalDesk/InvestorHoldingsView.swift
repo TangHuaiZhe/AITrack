@@ -594,14 +594,14 @@ private struct InvestorWritingDetail: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("AI 投资分析", systemImage: "sparkles")
+                        Label("AI 投资分析（详细版）", systemImage: "sparkles")
                             .font(.headline)
                         Spacer()
                         if let summary = currentWriting.aiSummary {
                             Text(summary.provider.title)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Button("重新生成") {
+                            Button(summary.isDetailedFormat ? "重新生成详细版" : "生成详细版") {
                                 store.clearSummary(
                                     writingID: currentWriting.id,
                                     investorID: currentWriting.investorID
@@ -614,6 +614,11 @@ private struct InvestorWritingDetail: View {
                     }
 
                     if let summary = currentWriting.aiSummary {
+                        if !summary.isDetailedFormat {
+                            Label("这是旧版简摘要，点击上方按钮可按完整材料重新生成。", systemImage: "info.circle")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                         MarkdownText(summary.content)
                             .lineSpacing(6)
                             .textSelection(.enabled)
@@ -641,7 +646,7 @@ private struct InvestorWritingDetail: View {
                         Button {
                             Task { await generateSummary() }
                         } label: {
-                            Label("生成 AI 总结", systemImage: "sparkles")
+                            Label("生成详细 AI 总结", systemImage: "sparkles")
                         }
                     }
                 }
