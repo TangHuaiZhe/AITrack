@@ -162,7 +162,7 @@ struct AppSnapshot: Codable {
     var dailyBrief: DailyBrief? = nil
 }
 
-enum AppSection: String, CaseIterable, Identifiable {
+enum AppSection: String, CaseIterable, Identifiable, Hashable {
     case inbox
     case xFeed
     case rssFeed

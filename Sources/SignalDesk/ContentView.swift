@@ -10,7 +10,8 @@ struct ContentView: View {
     @State private var query = ""
     @State private var category: SignalCategory?
     @State private var selectedTopic: SignalDomain?
-    @State private var selectedRSSSourceID: UUID?
+    @State private var selectedSourceID: UUID?
+    @State private var expandedSourceSections: Set<AppSection> = [.inbox, .xFeed, .rssFeed]
     @State private var selectedInvestorID = InvestorPreset.featured.first?.id
 
     var body: some View {
@@ -39,6 +40,7 @@ struct ContentView: View {
             section = .settings
             selection = nil
             selectedTopic = nil
+            selectedSourceID = nil
         }
         .task {
             await store.refresh()
@@ -78,17 +80,31 @@ struct ContentView: View {
 
             Section("监控") {
                 ForEach(AppSection.allCases) { item in
-                    if item == .rssFeed {
-                        Button {
-                            section = .rssFeed
-                            selectedRSSSourceID = nil
-                            selection = nil
-                        } label: {
-                            sectionLabel(item)
+                    if isSourceSection(item) {
+                        HStack(spacing: 4) {
+                            Button {
+                                toggleSourceSection(item)
+                            } label: {
+                                Image(systemName: expandedSourceSections.contains(item) ? "chevron.down" : "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 14, height: 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(
+                                expandedSourceSections.contains(item) ? "收起\(item.title)" : "展开\(item.title)"
+                            )
+
+                            Button {
+                                selectSection(item)
+                            } label: {
+                                sectionLabel(item)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                         .listRowBackground(
-                            section == .rssFeed && selectedRSSSourceID == nil
+                            section == item && (selectedSourceID == nil || !expandedSourceSections.contains(item))
                                 ? Color.accentColor.opacity(0.15)
                                 : Color.clear
                         )
@@ -110,12 +126,10 @@ struct ContentView: View {
                         .tag(item)
                     }
 
-                    if item == .rssFeed {
-                        ForEach(rssSources) { source in
+                    if isSourceSection(item) && expandedSourceSections.contains(item) {
+                        ForEach(sources(for: item)) { source in
                             Button {
-                                section = .rssFeed
-                                selectedRSSSourceID = source.id
-                                selection = nil
+                                selectSource(source.id, in: item)
                             } label: {
                                 HStack(spacing: 7) {
                                     Circle()
@@ -136,7 +150,7 @@ struct ContentView: View {
                             .buttonStyle(.plain)
                             .padding(.leading, 23)
                             .listRowBackground(
-                                section == .rssFeed && selectedRSSSourceID == source.id
+                                section == item && selectedSourceID == source.id
                                     ? Color.accentColor.opacity(0.12)
                                     : Color.clear
                             )
@@ -210,7 +224,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(selectedTopic.map { "\($0.title)主题" } ?? section?.title ?? "情报流")
+                    Text(selectedTopic.map { "\($0.title)主题" } ?? selectedSourceName ?? section?.title ?? "情报流")
                         .font(.largeTitle.weight(.bold))
                     Text(refreshSubtitle)
                         .font(.caption)
@@ -298,10 +312,14 @@ struct ContentView: View {
         store.events.filter { event in
             let sectionMatches: Bool
             switch section {
-            case .xFeed: sectionMatches = xSourceIDs.contains(event.sourceID)
+            case .inbox:
+                sectionMatches = selectedSourceID == nil || selectedSourceID == event.sourceID
+            case .xFeed:
+                sectionMatches = xSourceIDs.contains(event.sourceID) &&
+                    (selectedSourceID == nil || selectedSourceID == event.sourceID)
             case .rssFeed:
                 sectionMatches = rssSourceIDs.contains(event.sourceID) &&
-                    (selectedRSSSourceID == nil || selectedRSSSourceID == event.sourceID)
+                    (selectedSourceID == nil || selectedSourceID == event.sourceID)
             case .highValue: sectionMatches = event.importance >= 75
             case .bookmarks: sectionMatches = event.isBookmarked
             default: sectionMatches = true
@@ -339,10 +357,46 @@ struct ContentView: View {
         Set(store.sources.filter { $0.sourceKind == .rss }.map(\.id))
     }
 
-    private var rssSources: [TrackedSource] {
-        store.sources
-            .filter { $0.sourceKind == .rss }
+    private var selectedSourceName: String? {
+        guard let selectedSourceID else { return nil }
+        return store.sources.first { $0.id == selectedSourceID }?.name
+    }
+
+    private func isSourceSection(_ section: AppSection) -> Bool {
+        section == .inbox || section == .xFeed || section == .rssFeed
+    }
+
+    private func sources(for section: AppSection) -> [TrackedSource] {
+        let kind: SourceKind?
+        switch section {
+        case .inbox: kind = nil
+        case .xFeed: kind = .x
+        case .rssFeed: kind = .rss
+        default: kind = nil
+        }
+        return store.sources
+            .filter { kind == nil || $0.sourceKind == kind }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func selectSection(_ section: AppSection) {
+        self.section = section
+        selectedSourceID = nil
+        selection = nil
+    }
+
+    private func selectSource(_ sourceID: UUID, in section: AppSection) {
+        self.section = section
+        selectedSourceID = sourceID
+        selection = nil
+    }
+
+    private func toggleSourceSection(_ section: AppSection) {
+        if expandedSourceSections.contains(section) {
+            expandedSourceSections.remove(section)
+        } else {
+            expandedSourceSections.insert(section)
+        }
     }
 
     private func unreadCount(for sourceID: UUID) -> Int {
@@ -354,8 +408,12 @@ struct ContentView: View {
     @ViewBuilder
     private func sectionLabel(_ item: AppSection) -> some View {
         HStack {
-            Label(item.title, systemImage: item.icon)
-                .foregroundStyle(.primary)
+            Label {
+                Text(item.title)
+            } icon: {
+                Image(systemName: item.icon)
+                    .foregroundStyle(item == .highValue ? .orange : .blue)
+            }
             Spacer()
             if let count = badgeCount(for: item), count > 0 {
                 Text("\(count)")
@@ -400,6 +458,7 @@ struct ContentView: View {
         Button {
             selectedTopic = selectedTopic == domain ? nil : domain
             section = .inbox
+            selectedSourceID = nil
             selection = nil
         } label: {
             HStack {
