@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var query = ""
     @State private var category: SignalCategory?
     @State private var selectedTopic: SignalDomain?
+    @State private var selectedRSSSourceID: UUID?
     @State private var selectedInvestorID = InvestorPreset.featured.first?.id
 
     var body: some View {
@@ -77,21 +78,70 @@ struct ContentView: View {
 
             Section("监控") {
                 ForEach(AppSection.allCases) { item in
-                    Label {
-                        HStack {
-                            Text(item.title)
-                            Spacer()
-                            if let count = badgeCount(for: item), count > 0 {
-                                Text("\(count)")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
+                    if item == .rssFeed {
+                        Button {
+                            section = .rssFeed
+                            selectedRSSSourceID = nil
+                            selection = nil
+                        } label: {
+                            sectionLabel(item)
                         }
-                    } icon: {
-                        Image(systemName: item.icon)
-                            .foregroundStyle(item == .highValue ? .orange : .blue)
+                        .buttonStyle(.plain)
+                        .listRowBackground(
+                            section == .rssFeed && selectedRSSSourceID == nil
+                                ? Color.accentColor.opacity(0.15)
+                                : Color.clear
+                        )
+                    } else {
+                        Label {
+                            HStack {
+                                Text(item.title)
+                                Spacer()
+                                if let count = badgeCount(for: item), count > 0 {
+                                    Text("\(count)")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        } icon: {
+                            Image(systemName: item.icon)
+                                .foregroundStyle(item == .highValue ? .orange : .blue)
+                        }
+                        .tag(item)
                     }
-                    .tag(item)
+
+                    if item == .rssFeed {
+                        ForEach(rssSources) { source in
+                            Button {
+                                section = .rssFeed
+                                selectedRSSSourceID = source.id
+                                selection = nil
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Circle()
+                                        .fill(source.isEnabled ? Color.blue : Color.secondary)
+                                        .frame(width: 6, height: 6)
+                                    Text(source.name)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    let unread = unreadCount(for: source.id)
+                                    if unread > 0 {
+                                        Text("\(unread)")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.leading, 23)
+                            .listRowBackground(
+                                section == .rssFeed && selectedRSSSourceID == source.id
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.clear
+                            )
+                        }
+                    }
                 }
             }
 
@@ -148,16 +198,7 @@ struct ContentView: View {
                 )
             } else {
                 List(filteredEvents, selection: $selection) { event in
-                    EventRow(event: event)
-                        .tag(event.id)
-                        .contextMenu {
-                            Button(event.isBookmarked ? "取消收藏" : "收藏") {
-                                store.toggleBookmark(event.id)
-                            }
-                            if let rawURL = event.url, let url = URL(string: rawURL) {
-                                Button("打开原文") { openURL(url) }
-                            }
-                        }
+                    eventRow(event)
                 }
                 .listStyle(.inset)
             }
@@ -258,6 +299,9 @@ struct ContentView: View {
             let sectionMatches: Bool
             switch section {
             case .xFeed: sectionMatches = xSourceIDs.contains(event.sourceID)
+            case .rssFeed:
+                sectionMatches = rssSourceIDs.contains(event.sourceID) &&
+                    (selectedRSSSourceID == nil || selectedRSSSourceID == event.sourceID)
             case .highValue: sectionMatches = event.importance >= 75
             case .bookmarks: sectionMatches = event.isBookmarked
             default: sectionMatches = true
@@ -272,9 +316,15 @@ struct ContentView: View {
     }
 
     private var refreshSubtitle: String {
-        let activeSourceCount = section == .xFeed
-            ? store.sources.filter { $0.sourceKind == .x && $0.isEnabled }.count
-            : store.sources.filter(\.isEnabled).count
+        let activeSourceCount: Int
+        switch section {
+        case .xFeed:
+            activeSourceCount = store.sources.filter { $0.sourceKind == .x && $0.isEnabled }.count
+        case .rssFeed:
+            activeSourceCount = store.sources.filter { $0.sourceKind == .rss && $0.isEnabled }.count
+        default:
+            activeSourceCount = store.sources.filter(\.isEnabled).count
+        }
         if let date = store.lastRefreshAt {
             return "上次刷新 \(date.formatted(date: .omitted, time: .shortened)) · \(activeSourceCount) 个活跃来源"
         }
@@ -285,11 +335,58 @@ struct ContentView: View {
         Set(store.sources.filter { $0.sourceKind == .x }.map(\.id))
     }
 
+    private var rssSourceIDs: Set<UUID> {
+        Set(store.sources.filter { $0.sourceKind == .rss }.map(\.id))
+    }
+
+    private var rssSources: [TrackedSource] {
+        store.sources
+            .filter { $0.sourceKind == .rss }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func unreadCount(for sourceID: UUID) -> Int {
+        store.events.filter {
+            $0.sourceID == sourceID && !$0.isRead
+        }.count
+    }
+
+    @ViewBuilder
+    private func sectionLabel(_ item: AppSection) -> some View {
+        HStack {
+            Label(item.title, systemImage: item.icon)
+                .foregroundStyle(.primary)
+            Spacer()
+            if let count = badgeCount(for: item), count > 0 {
+                Text("\(count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func eventRow(_ event: SignalEvent) -> some View {
+        EventRow(event: event)
+            .tag(event.id)
+            .contextMenu {
+                Button(event.isBookmarked ? "取消收藏" : "收藏") {
+                    store.toggleBookmark(event.id)
+                }
+                if let rawURL = event.url, let url = URL(string: rawURL) {
+                    Button("打开原文") { openURL(url) }
+                }
+            }
+    }
+
     private func badgeCount(for item: AppSection) -> Int? {
         switch item {
         case .inbox: store.unreadCount
         case .xFeed:
             store.events.filter { xSourceIDs.contains($0.sourceID) && !$0.isRead }.count
+        case .rssFeed:
+            store.events.filter { rssSourceIDs.contains($0.sourceID) && !$0.isRead }.count
         case .highValue: store.highValueCount
         case .bookmarks: store.events.filter(\.isBookmarked).count
         case .dailyBrief: nil

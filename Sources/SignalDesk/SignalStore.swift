@@ -18,12 +18,14 @@ final class SignalStore: ObservableObject {
     private static let requestedPeopleCatalogID = "ai-robotics-longform-v4"
     private static let rayDalioCatalogID = "ray-dalio-v1"
     private static let domainTaxonomyID = "signal-domains-v3"
+    private static let researchSourcesCatalogID = "research-sources-v1"
 
     init(stateURL: URL? = nil) {
         self.stateURL = stateURL ?? Self.defaultStateURL
         load()
         installRequestedPeopleIfNeeded()
         installRayDalioIfNeeded()
+        installResearchSourcesIfNeeded()
         installDomainTaxonomyIfNeeded()
     }
 
@@ -381,6 +383,22 @@ final class SignalStore: ObservableObject {
                 fallbackDomains: source.map(PersonPreset.defaultDomains) ?? [],
                 kind: source?.sourceKind
             )
+        }
+        save()
+    }
+
+    private func installResearchSourcesIfNeeded() {
+        guard installedCatalogIDs.insert(Self.researchSourcesCatalogID).inserted else { return }
+
+        var keys = Set(sources.map(Self.sourceKey))
+        var added = 0
+        for source in CuratedSourcePreset.researchSources.map({ $0.trackedSource() }) {
+            guard keys.insert(Self.sourceKey(source)).inserted else { continue }
+            sources.append(source)
+            added += 1
+        }
+        if added > 0 {
+            statusMessage = "已新增 (added) 个研究与产业链来源"
         }
         save()
     }

@@ -56,27 +56,29 @@ struct XClientTests {
 
     @Test func mapsBrightDataPostsAndExcludesRepliesFromOtherAccounts() throws {
         let json = """
-        [
-          {
-            "id": "100",
-            "user_posted": "example",
-            "description": "AI chips and robotics are converging.",
-            "date_posted": "2026-08-04T08:30:00Z",
-            "url": "https://x.com/example/status/100",
-            "replies": 12,
-            "reposts": 34,
-            "likes": 567,
-            "quotes": 8,
-            "parent_post_details": { "post_id": "100" }
-          },
-          {
-            "id": "102",
-            "user_posted": "example",
-            "description": "This is a reply.",
-            "date_posted": "2026-08-04T08:10:00Z",
-            "parent_post_details": { "post_id": "99" }
-          }
-        ]
+        {
+          "id": "Example Founder",
+          "profile_name": "example",
+          "discovery_input": { "user_name": "example" },
+          "posts": [
+            {
+              "post_id": "100",
+              "description": "AI chips and robotics are converging.",
+              "date_posted": "2026-08-04T08:30:00Z",
+              "post_url": "https://x.com/example/status/100",
+              "replies": 12,
+              "reposts": 34,
+              "likes": 567,
+              "quotes": 8
+            },
+            {
+              "post_id": "102",
+              "description": "This is a reply.",
+              "date_posted": "2026-08-04T08:10:00Z",
+              "parent_post_details": { "post_id": "99" }
+            }
+          ]
+        }
         """
         var source = TrackedSource.x(
             name: "Example Founder",
@@ -99,6 +101,33 @@ struct XClientTests {
         #expect(events[0].matchedTopics.count == 2)
     }
 
+    @Test func mapsBrightDataNDJSONProfiles() throws {
+        let data = Data("""
+        {"discovery_input":{"user_name":"karpathy"},"posts":[{"post_id":"1","description":"LLM agents","date_posted":"2026-08-04T08:30:00Z","post_url":"https://x.com/karpathy/status/1"}]}
+        {"discovery_input":{"user_name":"RayDalio"},"posts":[{"post_id":"2","description":"Investment cycles","date_posted":"2026-08-04T08:20:00Z","post_url":"https://x.com/RayDalio/status/2"}]}
+        """.utf8)
+        let karpathy = TrackedSource.x(
+            name: "Andrej Karpathy",
+            role: "AI researcher",
+            username: "karpathy",
+            topics: ["AI"]
+        )
+        let dalio = TrackedSource.x(
+            name: "Ray Dalio",
+            role: "Investor",
+            username: "RayDalio",
+            topics: ["investment"]
+        )
+
+        let result = try XClient(provider: .brightData).brightDataEvents(
+            from: data,
+            sources: [karpathy, dalio]
+        )
+
+        #expect(result[karpathy.id]?.count == 1)
+        #expect(result[dalio.id]?.count == 1)
+    }
+
     @Test func buildsBrightDataProfileDiscoveryURL() throws {
         let components = try #require(
             URLComponents(url: XClient.brightDataURL, resolvingAgainstBaseURL: false)
@@ -106,25 +135,22 @@ struct XClientTests {
 
         #expect(XClient.brightDataURL.host == "api.brightdata.com")
         #expect(XClient.brightDataURL.path == "/datasets/v3/scrape")
-        #expect(components.queryItems?.first(where: { $0.name == "dataset_id" })?.value == "gd_lwxkxvnf1cynvib9co")
+        #expect(components.queryItems?.first(where: { $0.name == "dataset_id" })?.value == "gd_lwxmeb2u1cniijd7t4")
         #expect(components.queryItems?.first(where: { $0.name == "type" })?.value == "discover_new")
-        #expect(components.queryItems?.first(where: { $0.name == "discover_by" })?.value == "profiles_array")
-        #expect(components.queryItems?.first(where: { $0.name == "limit_per_input" })?.value == "20")
+        #expect(components.queryItems?.first(where: { $0.name == "discover_by" })?.value == "user_name")
+        #expect(components.queryItems?.first(where: { $0.name == "limit_per_input" }) == nil)
     }
 
-    @Test func buildsBrightDataProfilesArrayRequest() throws {
+    @Test func buildsBrightDataUsernameRequest() throws {
         let body = try XClient.brightDataRequestBody(usernames: ["karpathy", "RayDalio"])
         let json = try #require(
             JSONSerialization.jsonObject(with: body) as? [String: Any]
         )
         let inputs = try #require(json["input"] as? [[String: Any]])
 
-        #expect(inputs.count == 1)
-        #expect(inputs[0]["urls"] as? [String] == [
-            "https://x.com/karpathy",
-            "https://x.com/RayDalio"
-        ])
-        #expect(inputs[0]["url"] == nil)
+        #expect(inputs.count == 2)
+        #expect(inputs[0]["user_name"] as? String == "karpathy")
+        #expect(inputs[1]["user_name"] as? String == "RayDalio")
     }
 
     @Test func buildsBrightDataSnapshotURLs() {
@@ -144,7 +170,7 @@ struct XClientTests {
     }
 
     @Test func surfacesBrightDataCrawlerError() throws {
-        let data = Data(#"[{"error":"Crawler error: selector timeout"}]"#.utf8)
+        let data = Data(#"{"error":"Crawler error: selector timeout"}"#.utf8)
         let source = TrackedSource.x(
             name: "Example",
             role: "AI",

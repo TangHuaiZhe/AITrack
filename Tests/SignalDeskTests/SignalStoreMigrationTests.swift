@@ -14,10 +14,11 @@ struct SignalStoreMigrationTests {
         let firstKeys = Set(first.sources.map { "\($0.sourceKind.rawValue)|\($0.feedURL.lowercased())" })
         let second = SignalStore(stateURL: stateURL)
 
-        #expect(first.sources.count == 19)
+        #expect(first.sources.count == 28)
         #expect(firstKeys.count == first.sources.count)
         #expect(first.sources.filter { $0.sourceKind == .x }.isEmpty)
         #expect(first.sources.filter { $0.sourceKind == .mediaSearch }.count == 12)
+        #expect(first.sources.filter { $0.name.contains("SemiAnalysis") }.count == 1)
         #expect(second.sources.count == first.sources.count)
     }
 

@@ -67,7 +67,7 @@ enum XError: LocalizedError {
 
 struct XClient {
     private static let brightDataBatchSize = 20
-    private static let brightDataDatasetID = "gd_lwxkxvnf1cynvib9co"
+    private static let brightDataDatasetID = "gd_lwxmeb2u1cniijd7t4"
 
     var provider: XProvider = .selected
 
@@ -113,9 +113,16 @@ struct XClient {
         from data: Data,
         sources: [TrackedSource]
     ) throws -> [UUID: [SignalEvent]] {
-        let posts = try JSONDecoder.xData.decode([BrightDataPost].self, from: data)
+        let profiles = try brightDataProfiles(from: data)
+        let posts = profiles.flatMap { profile in
+            (profile.posts ?? []).map { post in
+                var post = post
+                post.userPosted = post.userPosted ?? profile.username
+                return post
+            }
+        }
         let validPosts = posts.filter { $0.id != nil && $0.description != nil }
-        if validPosts.isEmpty, let error = posts.compactMap(\.error).first {
+        if validPosts.isEmpty, let error = profiles.compactMap(\.error).first {
             throw XError.brightDataCrawler(error.prefixText(240))
         }
         var result: [UUID: [SignalEvent]] = [:]
@@ -204,18 +211,17 @@ struct XClient {
         components.queryItems = [
             URLQueryItem(name: "dataset_id", value: brightDataDatasetID),
             URLQueryItem(name: "type", value: "discover_new"),
-            URLQueryItem(name: "discover_by", value: "profiles_array"),
-            URLQueryItem(name: "include_errors", value: "true"),
-            URLQueryItem(name: "limit_per_input", value: "20")
+            URLQueryItem(name: "discover_by", value: "user_name"),
+            URLQueryItem(name: "include_errors", value: "true")
         ]
         return components.url!
     }
 
     static func brightDataRequestBody(usernames: [String]) throws -> Data {
-        try JSONEncoder().encode(
-            BrightDataRequest(
-                input: [.init(urls: usernames.map { "https://x.com/\($0)" })]
-            )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return try encoder.encode(
+            BrightDataRequest(input: usernames.map { .init(userName: $0) })
         )
     }
 
@@ -282,6 +288,22 @@ struct XClient {
             result.merge(batchResult) { _, new in new }
         }
         return result
+    }
+
+    private func brightDataProfiles(from data: Data) throws -> [BrightDataProfile] {
+        let decoder = JSONDecoder.xData
+        if let profiles = try? decoder.decode([BrightDataProfile].self, from: data) {
+            return profiles
+        }
+        if let profile = try? decoder.decode(BrightDataProfile.self, from: data) {
+            return [profile]
+        }
+
+        let lines = data.split(whereSeparator: { $0 == 0x0A || $0 == 0x0D })
+        guard !lines.isEmpty else { throw XError.invalidBrightDataResponse }
+        return try lines.map { line in
+            try decoder.decode(BrightDataProfile.self, from: Data(line))
+        }
     }
 
     private func waitForBrightDataSnapshot(
@@ -442,7 +464,7 @@ private struct BrightDataRequest: Encodable {
     var input: [Input]
 
     struct Input: Encodable {
-        var urls: [String]
+        var userName: String
     }
 }
 
@@ -454,18 +476,36 @@ private struct BrightDataSnapshotProgress: Decodable {
     var status: String
 }
 
-private struct BrightDataPost: Decodable {
+private struct BrightDataProfile: Decodable {
     var id: String?
+    var profileName: String?
+    var posts: [BrightDataPost]?
+    var error: String?
+    var discoveryInput: DiscoveryInput?
+
+    var username: String? {
+        discoveryInput?.userName ?? profileName ?? id
+    }
+
+    struct DiscoveryInput: Decodable {
+        var userName: String?
+    }
+}
+
+private struct BrightDataPost: Decodable {
+    var postId: String?
     var userPosted: String?
     var description: String?
     var datePosted: Date?
-    var url: String?
+    var postUrl: String?
     var replies: Int?
     var reposts: Int?
     var likes: Int?
     var quotes: Int?
     var parentPostDetails: ParentPostDetails?
-    var error: String?
+
+    var id: String? { postId }
+    var url: String? { postUrl }
 
     var isRetweetPost: Bool {
         description?.hasPrefix("RT @") == true

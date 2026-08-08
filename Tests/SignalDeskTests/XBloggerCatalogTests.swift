@@ -9,6 +9,12 @@ struct XBloggerCatalogTests {
         #expect(AppSection.xFeed.icon == "at.circle.fill")
     }
 
+    @Test func exposesDedicatedRSSFeedSection() {
+        #expect(AppSection.allCases.contains(.rssFeed))
+        #expect(AppSection.rssFeed.title == "RSS")
+        #expect(AppSection.rssFeed.icon == "dot.radiowaves.left.and.right")
+    }
+
     @Test func catalogHasUniqueAccountsAndBalancedRecommendations() {
         let bloggers = XBloggerPreset.catalog
         let usernames = Set(bloggers.map { $0.username.lowercased() })

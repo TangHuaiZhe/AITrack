@@ -165,6 +165,7 @@ struct AppSnapshot: Codable {
 enum AppSection: String, CaseIterable, Identifiable {
     case inbox
     case xFeed
+    case rssFeed
     case highValue
     case bookmarks
     case dailyBrief
@@ -178,6 +179,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .inbox: "情报流"
         case .xFeed: "X 情报"
+        case .rssFeed: "RSS"
         case .highValue: "高价值"
         case .bookmarks: "已收藏"
         case .dailyBrief: "每日快报"
@@ -191,6 +193,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .inbox: "rectangle.stack.fill"
         case .xFeed: "at.circle.fill"
+        case .rssFeed: "dot.radiowaves.left.and.right"
         case .highValue: "sparkles"
         case .bookmarks: "bookmark.fill"
         case .dailyBrief: "newspaper.fill"
