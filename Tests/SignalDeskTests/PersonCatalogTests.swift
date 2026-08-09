@@ -53,6 +53,28 @@ struct PersonCatalogTests {
         #expect(source.isEnabled)
     }
 
+    @Test func resolvesHoverProfilesForTrackedPeopleAndInvestors() throws {
+        let rayDalio = try #require(
+            PersonProfileCatalog.profile(forSourceName: "瑞·达利欧 / Ray Dalio · 个人 YouTube")
+        )
+        #expect(rayDalio.name == "瑞·达利欧 / Ray Dalio")
+        #expect(rayDalio.overview.contains("债务周期"))
+
+        let investor = try #require(
+            InvestorPreset.featured.first { $0.id == "duan-yongping" }
+        )
+        let investorProfile = PersonProfileCatalog.profile(for: investor)
+        #expect(investorProfile.name == "段永平")
+        #expect(investorProfile.subtitle == "H&H International Investment")
+    }
+
+    @Test func clampsAndMapsFontScale() {
+        #expect(SignalDeskFontScale.from(rawValue: -1) == .small)
+        #expect(SignalDeskFontScale.from(rawValue: 2).dynamicTypeSize == .large)
+        #expect(SignalDeskFontScale.from(rawValue: 3).factor > 1)
+        #expect(SignalDeskFontScale.from(rawValue: 99) == .extraLarge)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TRACKAI_LIVE_MEDIA_TEST"] == "1"))
     func everyMediaSearchReturnsResults() async throws {
         var peopleWithResults = 0

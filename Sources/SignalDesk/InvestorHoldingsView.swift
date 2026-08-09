@@ -39,9 +39,9 @@ struct InvestorListView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("杰出投资者")
-                        .font(.largeTitle.weight(.bold))
+                        .scaledFont(.largeTitle.weight(.bold))
                     Text("季度持仓、共识信号、基金信与投资观点")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -73,28 +73,28 @@ struct InvestorListView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(investor.name)
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Spacer()
                         if let portfolio = store.portfolio(for: investor.id) {
                             Text(portfolio.reportDate)
-                                .font(.caption.monospacedDigit())
+                                .scaledFont(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                     }
                     Text(investor.firm)
-                        .font(.subheadline)
+                        .scaledFont(.subheadline)
                         .foregroundStyle(.secondary)
                     Text(investor.style)
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                     if investor.holdingsKind == .chineseFund {
                         Text("基金季报前十大持仓")
-                            .font(.caption2)
+                            .scaledFont(.caption2)
                             .foregroundStyle(.blue)
                     } else if investor.holdingsKind == .unavailable {
                         Text("持仓暂无连续公开披露")
-                            .font(.caption2)
+                            .scaledFont(.caption2)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -150,8 +150,11 @@ struct InvestorPortfolioView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(investor.name)
-                        .font(.largeTitle.weight(.bold))
+                    PersonHoverName(
+                        title: investor.name,
+                        profile: PersonProfileCatalog.profile(for: investor)
+                    )
+                    .scaledFont(.largeTitle.weight(.bold))
                     Text("\(investor.firm) · \(investor.style)")
                         .foregroundStyle(.secondary)
                 }
@@ -208,7 +211,7 @@ struct InvestorPortfolioView: View {
                         Text("申报 \(portfolio.filingDate)")
                     }
                 }
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.secondary)
 
                 if store.refreshingInvestorID == investor.id {
@@ -222,13 +225,13 @@ struct InvestorPortfolioView: View {
                                 : 1
                         )
                         Text(store.statusMessage ?? "正在更新…")
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 } else if store.statusInvestorID == investor.id,
                           let message = store.statusMessage {
                     Text(message)
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(message.hasPrefix("刷新失败") ? .red : .secondary)
                 }
             } else {
@@ -239,13 +242,13 @@ struct InvestorPortfolioView: View {
                         Link("官方档案", destination: archive)
                     }
                 }
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.secondary)
 
                 if writingStore.statusInvestorID == investor.id,
                    let message = writingStore.statusMessage {
                     Text(message)
-                    .font(.caption)
+                    .scaledFont(.caption)
                     .foregroundStyle(message.hasPrefix("观点刷新失败") ? .red : .secondary)
                 }
             }
@@ -298,7 +301,7 @@ struct InvestorPortfolioView: View {
                 Text("更新于 \(portfolio.refreshedAt.formatted(date: .abbreviated, time: .shortened))")
                 Text("缓存有效期 30 天")
             }
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 22)
@@ -402,7 +405,7 @@ struct InvestorPortfolioView: View {
                         .monospacedDigit()
                     if let confidence = position.costConfidence {
                         Text(confidence.title)
-                            .font(.caption2)
+                            .scaledFont(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -445,25 +448,25 @@ struct InvestorPortfolioView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(position.ticker ?? position.cusip)
-                    .font(.headline.monospaced())
+                    .scaledFont(.headline.monospaced())
                 if let localizedName = position.chineseName {
                     Text(localizedName)
-                        .font(.subheadline.weight(.medium))
+                        .scaledFont(.subheadline.weight(.medium))
                         .lineLimit(1)
                 }
                 if let putCall = position.putCall {
                     Text(putCall.uppercased())
-                        .font(.caption2.weight(.bold))
+                        .scaledFont(.caption2.weight(.bold))
                         .foregroundStyle(.orange)
                 }
                 if showsExternalLink {
                     Image(systemName: "arrow.up.right.square")
-                        .font(.caption2)
+                        .scaledFont(.caption2)
                         .foregroundStyle(.blue)
                 }
             }
             Text(position.issuer)
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .textSelection(.enabled)
@@ -480,7 +483,7 @@ struct InvestorPortfolioView: View {
             Text("估算成本：历史股数先按拆股追溯调整，再按过去约 5 年季度增仓量和当期价格加权；减仓不重置成本。")
             Text("估算盈亏及 1/3/5/10 年 CAGR 使用拆股复权价格，不含股息；期权、无法映射或历史不足时显示“—”。")
         }
-        .font(.caption2)
+        .scaledFont(.caption2)
         .foregroundStyle(.secondary)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -490,9 +493,9 @@ struct InvestorPortfolioView: View {
     private func summaryMetric(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.headline.monospacedDigit())
+                .scaledFont(.headline.monospacedDigit())
             Text(label)
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -554,7 +557,7 @@ struct InvestorConsensusView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("持仓共识")
-                        .font(.largeTitle.weight(.bold))
+                        .scaledFont(.largeTitle.weight(.bold))
                     Text("聚合杰出投资者最近两期 SEC 13F 的买入与卖出变化")
                         .foregroundStyle(.secondary)
                 }
@@ -582,7 +585,7 @@ struct InvestorConsensusView: View {
                     Text(message)
                 }
             }
-            .font(.caption)
+            .scaledFont(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 22)
@@ -633,19 +636,19 @@ struct InvestorConsensusView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(item.ticker ?? item.cusip)
-                    .font(.headline.monospaced())
+                    .scaledFont(.headline.monospaced())
                 if let localizedName = item.localizedName,
                    localizedName.range(of: #"\p{Han}"#, options: .regularExpression) != nil {
                     Text(localizedName)
-                        .font(.headline.weight(.medium))
+                        .scaledFont(.headline.weight(.medium))
                 }
                 Text(item.issuer)
-                    .font(.subheadline)
+                    .scaledFont(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
                 Text(item.signalTitle)
-                    .font(.caption.weight(.bold))
+                    .scaledFont(.caption.weight(.bold))
                     .foregroundStyle(consensusColor(item))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -660,7 +663,7 @@ struct InvestorConsensusView: View {
                     Text("申报值 \(money(item.latestValueUSD, currencyCode: currencyCode))")
                 }
             }
-            .font(.caption)
+            .scaledFont(.caption)
             .foregroundStyle(.secondary)
 
             HStack(alignment: .top, spacing: 16) {
@@ -673,7 +676,7 @@ struct InvestorConsensusView: View {
                         .foregroundStyle(.green)
                 }
             }
-            .font(.caption)
+            .scaledFont(.caption)
         }
         .padding(.vertical, 14)
         .textSelection(.enabled)
@@ -723,25 +726,25 @@ private struct WritingRow: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Label(writing.kind.title, systemImage: writing.kind.icon)
-                    .font(.caption.weight(.semibold))
+                    .scaledFont(.caption.weight(.semibold))
                     .foregroundStyle(.blue)
                 Spacer()
                 Text(writing.displaysYearOnly == true
                     ? writing.period ?? writing.publishedAt.formatted(.dateTime.year())
                     : writing.publishedAt.formatted(.dateTime.year().month().day()))
-                    .font(.caption.monospacedDigit())
+                    .scaledFont(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
             Text(writing.title)
-                .font(.headline)
+                .scaledFont(.headline)
                 .lineLimit(3)
             HStack(spacing: 6) {
                 Text(writing.author)
-                    .font(.caption)
+                    .scaledFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Text(writing.attribution.title)
-                    .font(.caption2.weight(.medium))
+                    .scaledFont(.caption2.weight(.medium))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
@@ -753,7 +756,7 @@ private struct WritingRow: View {
                 Spacer()
                 if writing.aiSummary != nil {
                     Image(systemName: "sparkles")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.purple)
                 }
             }
@@ -782,7 +785,7 @@ private struct InvestorWritingDetail: View {
                     Label(currentWriting.kind.title, systemImage: currentWriting.kind.icon)
                         .foregroundStyle(.blue)
                     Text(currentWriting.attribution.title)
-                        .font(.caption.weight(.semibold))
+                        .scaledFont(.caption.weight(.semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(attributionColor.opacity(0.12), in: Capsule())
@@ -792,10 +795,20 @@ private struct InvestorWritingDetail: View {
 
                 VStack(alignment: .leading, spacing: 9) {
                     Text(currentWriting.title)
-                        .font(.title2.weight(.bold))
+                        .scaledFont(.title2.weight(.bold))
                         .textSelection(.enabled)
-                    Text("\(currentWriting.author) · \(currentWriting.publisher)")
-                    .font(.subheadline)
+                    HStack(spacing: 0) {
+                        if let profile = PersonProfileCatalog.profile(forSourceName: currentWriting.author) {
+                            PersonHoverName(
+                                title: currentWriting.author,
+                                profile: profile
+                            )
+                        } else {
+                            Text(currentWriting.author)
+                        }
+                        Text(" · \(currentWriting.publisher)")
+                    }
+                    .scaledFont(.subheadline)
                     .foregroundStyle(.secondary)
                     if let period = currentWriting.period {
                         Text(
@@ -807,7 +820,7 @@ private struct InvestorWritingDetail: View {
                                         time: .omitted
                                     )
                         )
-                            .font(.caption.monospacedDigit())
+                            .scaledFont(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     } else {
                         Text(
@@ -816,14 +829,14 @@ private struct InvestorWritingDetail: View {
                                 time: .omitted
                             )
                         )
-                        .font(.caption.monospacedDigit())
+                        .scaledFont(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text("来源归属")
-                        .font(.headline)
+                        .scaledFont(.headline)
                     Text(currentWriting.sourceNote)
                         .foregroundStyle(.secondary)
                         .lineSpacing(4)
@@ -833,11 +846,11 @@ private struct InvestorWritingDetail: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("AI 中文翻译", systemImage: "character.book.closed.fill")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Spacer()
                         if let translation = currentWriting.aiTranslation {
                             Text(translation.provider.title)
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
                             Button("重新翻译") {
                                 store.clearTranslation(
@@ -846,7 +859,7 @@ private struct InvestorWritingDetail: View {
                                 )
                                 Task { await generateTranslation() }
                             }
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .disabled(isTranslating)
                         }
                     }
@@ -859,7 +872,7 @@ private struct InvestorWritingDetail: View {
                             "翻译于 \(translation.generatedAt.formatted(date: .abbreviated, time: .shortened))"
                                 + " · AI 翻译可能有误，请结合原文核验"
                         )
-                        .font(.caption2)
+                        .scaledFont(.caption2)
                         .foregroundStyle(.tertiary)
                     } else if isTranslating {
                         HStack(spacing: 10) {
@@ -889,11 +902,11 @@ private struct InvestorWritingDetail: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("AI 投资分析（详细版）", systemImage: "sparkles")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Spacer()
                         if let summary = currentWriting.aiSummary {
                             Text(summary.provider.title)
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
                             Button(summary.isDetailedFormat ? "重新生成详细版" : "生成详细版") {
                                 store.clearSummary(
@@ -902,7 +915,7 @@ private struct InvestorWritingDetail: View {
                                 )
                                 Task { await generateSummary() }
                             }
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .disabled(isSummarizing)
                         }
                     }
@@ -910,7 +923,7 @@ private struct InvestorWritingDetail: View {
                     if let summary = currentWriting.aiSummary {
                         if !summary.isDetailedFormat {
                             Label("这是旧版简摘要，点击上方按钮可按完整材料重新生成。", systemImage: "info.circle")
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.orange)
                         }
                         MarkdownText(summary.content)
@@ -920,7 +933,7 @@ private struct InvestorWritingDetail: View {
                             "生成于 \(summary.generatedAt.formatted(date: .abbreviated, time: .shortened))"
                                 + " · AI 内容可能有误，请结合原文和 13F 核验"
                         )
-                        .font(.caption2)
+                        .scaledFont(.caption2)
                         .foregroundStyle(.tertiary)
                     } else if isSummarizing {
                         HStack(spacing: 10) {

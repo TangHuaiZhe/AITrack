@@ -5,6 +5,7 @@ struct SignalDeskApp: App {
     @StateObject private var store = SignalStore()
     @StateObject private var investorStore = InvestorHoldingsStore()
     @StateObject private var investorWritingStore = InvestorWritingStore()
+    @StateObject private var fontScaleStore = SignalDeskFontScaleStore()
 
     var body: some Scene {
         WindowGroup {
@@ -12,6 +13,7 @@ struct SignalDeskApp: App {
                 .environmentObject(store)
                 .environmentObject(investorStore)
                 .environmentObject(investorWritingStore)
+                .environment(\.signalDeskFontScaleFactor, fontScaleStore.scale.factor)
                 .frame(minWidth: 1_040, minHeight: 680)
         }
         .windowStyle(.hiddenTitleBar)
@@ -28,6 +30,29 @@ struct SignalDeskApp: App {
                     NotificationCenter.default.post(name: .signalDeskOpenSettings, object: nil)
                 }
                 .keyboardShortcut(",", modifiers: .command)
+            }
+
+            CommandMenu("显示") {
+                Button("放大字体") {
+                    fontScaleStore.adjust(by: 1)
+                }
+                .keyboardShortcut("=", modifiers: [.command, .shift])
+                .disabled(fontScaleStore.scale == .extraLarge)
+
+                Button("缩小字体") {
+                    fontScaleStore.adjust(by: -1)
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(fontScaleStore.scale == .small)
+
+                Button("恢复标准字体") {
+                    fontScaleStore.reset()
+                }
+                .keyboardShortcut("0", modifiers: .command)
+                .disabled(fontScaleStore.scale == .standard)
+
+                Divider()
+                Text("当前字号：\(fontScaleStore.scale.title)")
             }
         }
     }

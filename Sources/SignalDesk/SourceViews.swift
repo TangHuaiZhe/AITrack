@@ -11,9 +11,9 @@ struct SourcesView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("监控对象")
-                        .font(.largeTitle.weight(.bold))
+                        .scaledFont(.largeTitle.weight(.bold))
                     Text("人物、机构及其公开信息源")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -44,16 +44,16 @@ struct SourcesView: View {
                             RoundedRectangle(cornerRadius: 10)
                             .fill(source.sourceKind == .sec13F ? Color.green.opacity(0.14) : Color.blue.opacity(0.14))
                             Text(source.initials)
-                                .font(.caption.weight(.bold))
+                                .scaledFont(.caption.weight(.bold))
                                 .foregroundStyle(source.sourceKind == .sec13F ? .green : .blue)
                         }
                         .frame(width: 42, height: 42)
 
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(source.name).font(.headline)
-                            Text(source.role).font(.caption).foregroundStyle(.secondary)
+                            Text(source.name).scaledFont(.headline)
+                            Text(source.role).scaledFont(.caption).foregroundStyle(.secondary)
                             Label(source.sourceKind.title, systemImage: source.sourceKind.icon)
-                                .font(.caption2)
+                                .scaledFont(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer()
@@ -68,7 +68,7 @@ struct SourcesView: View {
                             .labelsHidden()
                             if let date = source.lastCheckedAt {
                                 Text(date, format: .relative(presentation: .named))
-                                    .font(.caption2)
+                                    .scaledFont(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
                         }
@@ -102,7 +102,7 @@ struct AddSourceView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("添加监控对象")
-                    .font(.title2.weight(.bold))
+                    .scaledFont(.title2.weight(.bold))
                 Text("连接公开 RSS / Atom，或监控机构的 SEC 13F 披露。")
                     .foregroundStyle(.secondary)
             }
@@ -123,14 +123,14 @@ struct AddSourceView: View {
                 } else if kind == .sec13F {
                     TextField("SEC CIK（只填数字）", text: $cik)
                     Text("示例：Berkshire Hathaway 的 CIK 为 1067983")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     TextField("X 用户名（不含 @ 也可以）", text: $username)
                     TextField("关注主题（逗号分隔）", text: $topics)
                     if XProvider.selected.apiKey == nil {
                         Label("请先在设置中保存 \(XProvider.selected.title) API Key", systemImage: "key")
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .foregroundStyle(.orange)
                     }
                 }
@@ -142,7 +142,7 @@ struct AddSourceView: View {
                     "13F 是季度披露，通常有时滞；本应用监控新申报，不把它误称为实时持仓。",
                     systemImage: "info.circle"
                 )
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.secondary)
             }
 
@@ -237,18 +237,18 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("设置")
-                        .font(.largeTitle.weight(.bold))
+                        .scaledFont(.largeTitle.weight(.bold))
                     Text("外部服务凭据只保存在这台 Mac 的钥匙串中")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 14) {
                         Label("AI 总结与翻译", systemImage: "sparkles")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Text("只有点击详情页的“生成 AI 总结”或“翻译为中文”后才会调用模型，结果会缓存。本机模型不产生 API 费用；视频与播客在没有字幕时仅根据标题和节目简介处理。")
-                            .font(.subheadline)
+                            .scaledFont(.subheadline)
                             .foregroundStyle(.secondary)
 
                         Picker("总结方式", selection: $summaryModeRaw) {
@@ -262,16 +262,16 @@ struct SettingsView: View {
                             Label("Apple 本机模型", systemImage: "laptopcomputer")
                             Spacer()
                             Text(AISummaryService.localAvailabilityDescription)
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
                         }
 
                         Divider()
 
                         Text("Ollama 免费本地模型")
-                            .font(.subheadline.weight(.semibold))
+                            .scaledFont(.subheadline.weight(.semibold))
                         Text("当前推荐 M4 / 16 GB 使用 qwen3.5:4b。模型约占数 GB 磁盘，生成时会使用本机算力，文章不会上传。")
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .foregroundStyle(.secondary)
 
                         HStack {
@@ -291,19 +291,19 @@ struct SettingsView: View {
                                 ProgressView().controlSize(.small)
                             }
                             Text(ollamaStatus)
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
                             Text("安装后运行：ollama run \(ollamaModel)")
-                                .font(.caption.monospaced())
+                                .scaledFont(.caption.monospaced())
                                 .textSelection(.enabled)
                         }
 
                         Divider()
 
                         Text("DeepSeek 备用")
-                            .font(.subheadline.weight(.semibold))
+                            .scaledFont(.subheadline.weight(.semibold))
                         Text("仅在你明确选择 DeepSeek 时调用，正文会发送给 DeepSeek。API Key 只保存在钥匙串。")
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .foregroundStyle(.secondary)
 
                         HStack {
@@ -345,7 +345,7 @@ struct SettingsView: View {
                                     deepSeekStatus,
                                     systemImage: deepSeekStatusIsError ? "xmark.circle.fill" : "checkmark.circle.fill"
                                 )
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(deepSeekStatusIsError ? .red : .green)
                             }
                         }
@@ -356,9 +356,9 @@ struct SettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 14) {
                         Label("X 数据服务", systemImage: "at")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Text("选择第三方服务读取关键人物的公开 Posts，无需 X Developer Token；两家服务的 API Key 分别保存在钥匙串。")
-                            .font(.subheadline)
+                            .scaledFont(.subheadline)
                             .foregroundStyle(.secondary)
 
                         Picker("服务商", selection: $xProviderRaw) {
@@ -373,7 +373,7 @@ struct SettingsView: View {
                         }
 
                         Text(selectedXProvider.detail)
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .foregroundStyle(.secondary)
 
                         HStack {
@@ -415,7 +415,7 @@ struct SettingsView: View {
                             }
                             if let status {
                                 Label(status, systemImage: statusIsError ? "xmark.circle.fill" : "checkmark.circle.fill")
-                                    .font(.caption)
+                                    .scaledFont(.caption)
                                     .foregroundStyle(statusIsError ? .red : .green)
                             }
                         }
@@ -426,9 +426,9 @@ struct SettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("SEC EDGAR", systemImage: "building.columns")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Text("13F 数据直接读取 SEC 官方公开接口，无需 API Key。TrackAI 对最近两个报告期进行逐证券差分，并用约 5 年申报历史估算建仓成本。")
-                            .font(.subheadline)
+                            .scaledFont(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     .padding(8)
@@ -437,9 +437,9 @@ struct SettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 14) {
                         Label("Twelve Data 行情", systemImage: "chart.line.uptrend.xyaxis")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Text("用于计算持仓的估算盈亏与 1/3/5/10 年拆股复权价格 CAGR。免费 Basic 计划限 8 credits/分钟、800 credits/天；TrackAI 会按 8 个标的一批自动等待并缓存结果。")
-                            .font(.subheadline)
+                            .scaledFont(.subheadline)
                             .foregroundStyle(.secondary)
 
                         HStack {
@@ -489,7 +489,7 @@ struct SettingsView: View {
                                         ? "xmark.circle.fill"
                                         : "checkmark.circle.fill"
                                 )
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(twelveDataStatusIsError ? .red : .green)
                             }
                         }
@@ -624,7 +624,7 @@ struct PeopleCatalogView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("AI / 机器人 / 投资关键人物")
-                            .font(.title2.weight(.bold))
+                            .scaledFont(.title2.weight(.bold))
                         Text("来自你提供的清单。每个来源均区分本人观点与机构输出。")
                             .foregroundStyle(.secondary)
                     }
@@ -635,7 +635,7 @@ struct PeopleCatalogView: View {
                 }
 
                 Label("不导入人物 X；重点追踪采访、播客、演讲、视频和官方长内容。", systemImage: "mic.fill")
-                    .font(.caption)
+                    .scaledFont(.caption)
                     .foregroundStyle(.blue)
                     .padding(.top, 6)
             }
@@ -653,14 +653,14 @@ struct PeopleCatalogView: View {
                 } label: {
                     HStack(alignment: .top, spacing: 13) {
                         Image(systemName: selected.contains(person.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
+                            .scaledFont(.title3)
                             .foregroundStyle(selected.contains(person.id) ? .blue : .secondary)
                             .padding(.top, 2)
 
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(person.name)
-                                    .font(.headline)
+                                    .scaledFont(.headline)
                                     .foregroundStyle(.primary)
                                 sourceBadge("长内容检索", color: .blue)
                                 ForEach(person.feeds, id: \.url) { feed in
@@ -668,11 +668,11 @@ struct PeopleCatalogView: View {
                                 }
                             }
                             Text(person.stance)
-                                .font(.subheadline)
+                                .scaledFont(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                             Text("追踪：\(person.variables.prefix(5).joined(separator: " · "))")
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
                         }
@@ -708,7 +708,7 @@ struct PeopleCatalogView: View {
 
     private func sourceBadge(_ title: String, color: Color) -> some View {
         Text(title)
-            .font(.caption2.weight(.semibold))
+            .scaledFont(.caption2.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -732,7 +732,7 @@ struct XBloggerCatalogView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("X 博主库")
-                            .font(.title2.weight(.bold))
+                            .scaledFont(.title2.weight(.bold))
                         Text("精选 AI、机器人、芯片与投资领域账号，通过 \(XProvider.selected.title) 追踪公开 Posts。")
                             .foregroundStyle(.secondary)
                     }
@@ -755,11 +755,11 @@ struct XBloggerCatalogView: View {
 
                 if XProvider.selected.apiKey == nil {
                     Label("尚未配置 \(XProvider.selected.title) API Key；导入后来源会保持关闭。", systemImage: "key")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.orange)
                 } else {
                     Label("核心推荐共 \(bloggers.filter(\.isRecommended).count) 位；可继续增减后批量导入。", systemImage: "checkmark.seal.fill")
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.blue)
                 }
             }
@@ -773,17 +773,17 @@ struct XBloggerCatalogView: View {
                 } label: {
                     HStack(alignment: .top, spacing: 13) {
                         Image(systemName: selected.contains(blogger.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
+                            .scaledFont(.title3)
                             .foregroundStyle(selected.contains(blogger.id) ? .blue : .secondary)
                             .padding(.top, 2)
 
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 7) {
                                 Text(blogger.name)
-                                    .font(.headline)
+                                    .scaledFont(.headline)
                                     .foregroundStyle(.primary)
                                 Text("@\(blogger.username)")
-                                    .font(.caption.monospaced())
+                                    .scaledFont(.caption.monospaced())
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                                 if blogger.isRecommended {
@@ -792,15 +792,15 @@ struct XBloggerCatalogView: View {
                                 badge(blogger.category.title, color: categoryColor(blogger.category))
                             }
                             Text(blogger.role)
-                                .font(.subheadline)
+                                .scaledFont(.subheadline)
                                 .foregroundStyle(.secondary)
                             Text("追踪：\(blogger.topics.prefix(5).joined(separator: " · "))")
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
                             if let note = blogger.note {
                                 Text(note)
-                                    .font(.caption2)
+                                    .scaledFont(.caption2)
                                     .foregroundStyle(.orange)
                             }
                         }
@@ -864,7 +864,7 @@ struct XBloggerCatalogView: View {
 
     private func badge(_ title: String, color: Color) -> some View {
         Text(title)
-            .font(.caption2.weight(.semibold))
+            .scaledFont(.caption2.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

@@ -91,7 +91,7 @@ struct ContentView: View {
                                 toggleSourceSection(item)
                             } label: {
                                 Image(systemName: expandedSourceSections.contains(item) ? "chevron.down" : "chevron.right")
-                                    .font(.caption2.weight(.semibold))
+                                    .scaledFont(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 14, height: 24)
                                     .contentShape(Rectangle())
@@ -120,7 +120,7 @@ struct ContentView: View {
                                 Spacer()
                                 if let count = badgeCount(for: item), count > 0 {
                                     Text("\(count)")
-                                        .font(.caption.monospacedDigit())
+                                        .scaledFont(.caption.monospacedDigit())
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -146,7 +146,7 @@ struct ContentView: View {
                                     let unread = unreadCount(for: group)
                                     if unread > 0 {
                                         Text("\(unread)")
-                                            .font(.caption2.monospacedDigit())
+                                            .scaledFont(.caption2.monospacedDigit())
                                             .foregroundStyle(.secondary)
                                     }
                                 }
@@ -191,15 +191,15 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 11)
                     .fill(LinearGradient(colors: [.indigo, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing))
                 Image(systemName: "waveform.path.ecg.rectangle.fill")
-                    .font(.title2)
+                    .scaledFont(.title2)
                     .foregroundStyle(.white)
             }
             .frame(width: 42, height: 42)
             VStack(alignment: .leading, spacing: 1) {
                 Text("SignalDesk")
-                    .font(.title3.weight(.bold))
+                    .scaledFont(.title3.weight(.bold))
                 Text("重要人物情报台")
-                    .font(.caption)
+                    .scaledFont(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -230,9 +230,9 @@ struct ContentView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(selectedTopic.map { "\($0.title)主题" } ?? selectedSourceName ?? section?.title ?? "情报流")
-                        .font(.largeTitle.weight(.bold))
+                        .scaledFont(.largeTitle.weight(.bold))
                     Text(refreshSubtitle)
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 if let selectedTopic {
@@ -248,7 +248,7 @@ struct ContentView: View {
                 Spacer()
                 if let message = store.statusMessage {
                     Text(message)
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Button {
@@ -448,7 +448,7 @@ struct ContentView: View {
             Spacer()
             if let count = badgeCount(for: item), count > 0 {
                 Text("\(count)")
-                    .font(.caption.monospacedDigit())
+                    .scaledFont(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
         }
@@ -497,11 +497,11 @@ struct ContentView: View {
                 Text(domain.title)
                 Spacer()
                 Text("\(store.events.filter { $0.domains?.contains(domain) == true }.count)")
-                    .font(.caption.monospacedDigit())
+                    .scaledFont(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
                 if selectedTopic == domain {
                     Image(systemName: "checkmark")
-                        .font(.caption.weight(.semibold))
+                        .scaledFont(.caption.weight(.semibold))
                         .foregroundStyle(topicColor(domain))
                 }
             }
@@ -543,23 +543,23 @@ private struct EventRow: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Text(event.sourceName)
-                        .font(.caption.weight(.semibold))
+                        .scaledFont(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Label(event.category.title, systemImage: event.category.icon)
-                        .font(.caption2.weight(.medium))
+                        .scaledFont(.caption2.weight(.medium))
                         .foregroundStyle(categoryColor)
                     Spacer()
                     Text(event.publishedAt, format: .relative(presentation: .named))
-                        .font(.caption)
+                        .scaledFont(.caption)
                         .foregroundStyle(.tertiary)
                 }
 
                 Text(event.title)
-                    .font(.headline)
+                    .scaledFont(.headline)
                     .lineLimit(2)
                 if !event.summary.isEmpty {
                     Text(event.summary)
-                        .font(.subheadline)
+                        .scaledFont(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -567,7 +567,7 @@ private struct EventRow: View {
                     ScorePill(score: event.importance)
                     ForEach(event.matchedTopics.prefix(3), id: \.self) { topic in
                         Text(topic)
-                            .font(.caption2)
+                            .scaledFont(.caption2)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(.quaternary, in: Capsule())
@@ -597,7 +597,7 @@ private struct ScorePill: View {
 
     var body: some View {
         Text("\(score) 分")
-            .font(.caption2.weight(.bold).monospacedDigit())
+            .scaledFont(.caption2.weight(.bold).monospacedDigit())
             .foregroundStyle(color)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -634,11 +634,21 @@ private struct EventDetail: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text(event.title)
-                        .font(.title.weight(.bold))
+                        .scaledFont(.title.weight(.bold))
                         .textSelection(.enabled)
-                    Text("\(event.sourceName) · \(event.publishedAt.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 0) {
+                        if let profile = PersonProfileCatalog.profile(forSourceName: event.sourceName) {
+                            PersonHoverName(
+                                title: eventPersonName,
+                                profile: profile
+                            )
+                        } else {
+                            Text(event.sourceName)
+                        }
+                        Text(" · \(event.publishedAt.formatted(date: .abbreviated, time: .shortened))")
+                    }
+                    .scaledFont(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 14) {
@@ -648,11 +658,11 @@ private struct EventDetail: View {
 
                 if !event.matchedTopics.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("命中主题").font(.headline)
+                        Text("命中主题").scaledFont(.headline)
                         HStack {
                             ForEach(event.matchedTopics, id: \.self) { topic in
                                 Text(topic)
-                                    .font(.caption.weight(.medium))
+                                    .scaledFont(.caption.weight(.medium))
                                     .padding(.horizontal, 9)
                                     .padding(.vertical, 5)
                                     .background(.blue.opacity(0.1), in: Capsule())
@@ -662,9 +672,9 @@ private struct EventDetail: View {
                 }
 
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("来源摘要").font(.headline)
+                    Text("来源摘要").scaledFont(.headline)
                     Text(event.summary.isEmpty ? "该来源未提供摘要，请打开原文查看。" : event.summary)
-                        .font(.body)
+                        .scaledFont(.body)
                         .foregroundStyle(.secondary)
                         .lineSpacing(5)
                         .textSelection(.enabled)
@@ -673,28 +683,28 @@ private struct EventDetail: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("AI 中文翻译", systemImage: "character.book.closed.fill")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Spacer()
                         if let translation = event.aiTranslation {
                             Text(translation.provider.title)
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
                             Button("重新翻译") {
                                 store.clearTranslation(for: event.id)
                                 Task { await generateTranslation() }
                             }
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .disabled(isTranslating)
                         }
                     }
 
                     if let translation = event.aiTranslation {
                         MarkdownText(translation.content)
-                            .font(.body)
+                            .scaledFont(.body)
                             .lineSpacing(6)
                             .textSelection(.enabled)
                         Text("翻译于 \(translation.generatedAt.formatted(date: .abbreviated, time: .shortened)) · AI 翻译可能有误，请结合原文核验")
-                            .font(.caption2)
+                            .scaledFont(.caption2)
                             .foregroundStyle(.tertiary)
                     } else if isTranslating {
                         HStack(spacing: 10) {
@@ -705,7 +715,7 @@ private struct EventDetail: View {
                     } else if let translationError {
                         VStack(alignment: .leading, spacing: 8) {
                             Label(translationError, systemImage: "exclamationmark.triangle.fill")
-                                .font(.subheadline)
+                                .scaledFont(.subheadline)
                                 .foregroundStyle(.orange)
                             Button("重试") {
                                 Task { await generateTranslation() }
@@ -725,17 +735,17 @@ private struct EventDetail: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("AI 情报总结（详细版）", systemImage: "sparkles")
-                            .font(.headline)
+                            .scaledFont(.headline)
                         Spacer()
                         if let summary = event.aiSummary {
                             Text(summary.provider.title)
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
                             Button(summary.isDetailedFormat ? "重新生成详细版" : "生成详细版") {
                                 store.clearSummary(for: event.id)
                                 Task { await generateSummary() }
                             }
-                            .font(.caption)
+                            .scaledFont(.caption)
                             .disabled(isSummarizing)
                         }
                     }
@@ -743,15 +753,15 @@ private struct EventDetail: View {
                     if let summary = event.aiSummary {
                         if !summary.isDetailedFormat {
                             Label("这是旧版简摘要，点击上方按钮可按完整材料重新生成。", systemImage: "info.circle")
-                                .font(.caption)
+                                .scaledFont(.caption)
                                 .foregroundStyle(.orange)
                         }
                         MarkdownText(summary.content)
-                            .font(.body)
+                            .scaledFont(.body)
                             .lineSpacing(6)
                             .textSelection(.enabled)
                         Text("生成于 \(summary.generatedAt.formatted(date: .abbreviated, time: .shortened)) · AI 内容可能有误，请结合原始来源核验")
-                            .font(.caption2)
+                            .scaledFont(.caption2)
                             .foregroundStyle(.tertiary)
                     } else if isSummarizing {
                         HStack(spacing: 10) {
@@ -762,7 +772,7 @@ private struct EventDetail: View {
                     } else if let summaryError {
                         VStack(alignment: .leading, spacing: 8) {
                             Label(summaryError, systemImage: "exclamationmark.triangle.fill")
-                                .font(.subheadline)
+                                .scaledFont(.subheadline)
                                 .foregroundStyle(.orange)
                             Button("重试") {
                                 Task { await generateSummary() }
@@ -834,13 +844,17 @@ private struct EventDetail: View {
         }
     }
 
+    private var eventPersonName: String {
+        event.sourceName.components(separatedBy: " · ").first ?? event.sourceName
+    }
+
     private func metric(title: String, value: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.title2.weight(.bold).monospacedDigit())
+                .scaledFont(.title2.weight(.bold).monospacedDigit())
                 .foregroundStyle(color)
             Text(title)
-                .font(.caption)
+                .scaledFont(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
