@@ -74,6 +74,11 @@ struct FeedClient {
                 )
             }
         }
+        if let requiredTitleTerms = source.requiredTitleTerms, !requiredTitleTerms.isEmpty {
+            parsedItems = parsedItems.filter {
+                MediaClassifier.matchesPerson(title: $0.title, aliases: requiredTitleTerms)
+            }
+        }
         let items = parsedItems
             .sorted { $0.publishedAt > $1.publishedAt }
             .prefix(itemLimit)

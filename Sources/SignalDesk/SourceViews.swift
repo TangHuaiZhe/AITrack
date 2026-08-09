@@ -245,9 +245,9 @@ struct SettingsView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 14) {
-                        Label("AI 总结", systemImage: "sparkles")
+                        Label("AI 总结与翻译", systemImage: "sparkles")
                             .font(.headline)
-                        Text("只有点击详情页的“生成 AI 总结”后才会调用模型，结果会缓存。本机模型不产生 API 费用；视频与播客在没有字幕时仅根据标题和节目简介总结。")
+                        Text("只有点击详情页的“生成 AI 总结”或“翻译为中文”后才会调用模型，结果会缓存。本机模型不产生 API 费用；视频与播客在没有字幕时仅根据标题和节目简介处理。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 

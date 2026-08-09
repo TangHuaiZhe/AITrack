@@ -1,6 +1,20 @@
 import AppKit
 import SwiftUI
 
+enum InvestorPageTab: String, CaseIterable, Identifiable {
+    case investors
+    case consensus
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .investors: "投资者"
+        case .consensus: "持仓共识"
+        }
+    }
+}
+
 private enum InvestorDetailTab: String, CaseIterable, Identifiable {
     case holdings
     case writings
@@ -18,16 +32,38 @@ private enum InvestorDetailTab: String, CaseIterable, Identifiable {
 struct InvestorListView: View {
     @EnvironmentObject private var store: InvestorHoldingsStore
     @Binding var selection: String?
+    @Binding var selectedTab: InvestorPageTab
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("杰出投资者")
-                    .font(.largeTitle.weight(.bold))
-                Text("季度持仓、基金信与投资观点")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("杰出投资者")
+                        .font(.largeTitle.weight(.bold))
+                    Text("季度持仓、共识信号、基金信与投资观点")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await store.refreshAll() }
+                } label: {
+                    Label(
+                        store.isRefreshingAll ? "刷新全部中" : "刷新全部持仓",
+                        systemImage: "arrow.clockwise"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.refreshingInvestorID != nil || store.isRefreshingAll)
             }
+
+            Picker("查看内容", selection: $selectedTab) {
+                ForEach(InvestorPageTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 240)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
 
@@ -52,6 +88,15 @@ struct InvestorListView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                    if investor.holdingsKind == .chineseFund {
+                        Text("基金季报前十大持仓")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                    } else if investor.holdingsKind == .unavailable {
+                        Text("持仓暂无连续公开披露")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .padding(.vertical, 7)
                 .tag(investor.id)
@@ -89,6 +134,7 @@ struct InvestorPortfolioView: View {
                 selectedWritingID = writingStore.writings(for: investor.id).first?.id
             }
             .task(id: investorID) {
+                await store.refreshIfStale(investor)
                 await store.loadChineseNames(for: investor.id)
             }
         } else {
@@ -120,8 +166,8 @@ struct InvestorPortfolioView: View {
                         )
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.refreshingInvestorID != nil)
-                } else {
+                    .disabled(store.refreshingInvestorID != nil || store.isRefreshingAll)
+                } else if selectedTab == .writings {
                     Button {
                         Task { await writingStore.refresh(investor) }
                     } label: {
@@ -141,12 +187,20 @@ struct InvestorPortfolioView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 260)
+            .frame(width: 360)
 
             if selectedTab == .holdings {
                 HStack(spacing: 8) {
-                    Label("SEC EDGAR", systemImage: "building.columns")
-                    Text("季度末快照，最长可能滞后约 45 天")
+                    if investor.holdingsKind == .sec13F {
+                        Label("SEC EDGAR", systemImage: "building.columns")
+                        Text("季度末快照，最长可能滞后约 45 天")
+                    } else if investor.holdingsKind == .chineseFund {
+                        Label("基金季报", systemImage: "building.columns")
+                        Text("公开前十大持仓，非完整组合")
+                    } else {
+                        Label("公开披露", systemImage: "questionmark.folder")
+                        Text("当前没有可核验的公开持仓")
+                    }
                     if let portfolio = store.portfolio(for: investor.id) {
                         Text("·")
                         Text("报告期 \(portfolio.reportDate)")
@@ -212,27 +266,38 @@ struct InvestorPortfolioView: View {
             ContentUnavailableView {
                 Label("尚未读取持仓", systemImage: "tray")
             } description: {
-                Text("SEC 13F 无需 API Key；先读取申报即可查看持仓和占比。")
-            } actions: {
-                Button("读取最新 13F") {
-                    Task { await store.refresh(investor) }
+                if investor.holdingsKind == .sec13F {
+                    Text("SEC 13F 无需 API Key；先读取申报即可查看持仓和占比。")
+                } else if investor.holdingsKind == .chineseFund {
+                    Text("将读取基金季报公开的前十大股票持仓；数据不是完整组合。")
+                } else {
+                    Text("目前没有连续、可核验的公开持仓披露，因此不填充猜测数据。")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.refreshingInvestorID != nil)
+            } actions: {
+                if investor.holdingsKind != .unavailable {
+                    Button(investor.holdingsKind == .chineseFund ? "读取最新基金季报" : "读取最新 13F") {
+                        Task { await store.refresh(investor) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.refreshingInvestorID != nil || store.isRefreshingAll)
+                }
             }
         }
     }
 
     private func portfolioSummary(_ portfolio: InvestorPortfolio) -> some View {
         HStack(spacing: 26) {
-            summaryMetric("申报总值", usd(portfolio.totalValueUSD))
+            summaryMetric("申报总值", money(portfolio.totalValueUSD, currencyCode: portfolio.currencyCode))
             summaryMetric("持仓数量", "\(portfolio.positions.count)")
             summaryMetric(
                 "已补全行情",
                 "\(portfolio.positions.filter { $0.latestPrice != nil }.count)"
             )
             Spacer()
-            Text("更新于 \(portfolio.refreshedAt.formatted(date: .abbreviated, time: .shortened))")
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("更新于 \(portfolio.refreshedAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("缓存有效期 30 天")
+            }
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -327,7 +392,7 @@ struct InvestorPortfolioView: View {
             .width(min: 70, ideal: 85, max: 100)
 
             TableColumn("申报价值") { position in
-                numericText(usd(position.valueUSD))
+                numericText(money(position.valueUSD, currencyCode: portfolio.currencyCode))
             }
             .width(min: 78, ideal: 92, max: 110)
 
@@ -461,22 +526,193 @@ struct InvestorPortfolioView: View {
         value.formatted(.currency(code: "USD").precision(.fractionLength(2)))
     }
 
-    private func usd(_ value: Int64) -> String {
+    private func money(_ value: Int64, currencyCode: String = "USD") -> String {
+        let symbol = currencyCode == "CNY" ? "¥" : "$"
         if value >= 1_000_000_000 {
-            return "$" + (Double(value) / 1_000_000_000).formatted(
+            return symbol + (Double(value) / 1_000_000_000).formatted(
                 .number.precision(.fractionLength(1))
             ) + "B"
         }
         if value >= 1_000_000 {
-            return "$" + (Double(value) / 1_000_000).formatted(
+            return symbol + (Double(value) / 1_000_000).formatted(
                 .number.precision(.fractionLength(1))
             ) + "M"
         }
-        return "$" + value.formatted(.number)
+        return symbol + value.formatted(.number)
     }
 
     private func shares(_ value: Double) -> String {
         value.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
+    }
+}
+
+struct InvestorConsensusView: View {
+    @EnvironmentObject private var store: InvestorHoldingsStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("持仓共识")
+                        .font(.largeTitle.weight(.bold))
+                    Text("聚合杰出投资者最近两期 SEC 13F 的买入与卖出变化")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await store.refreshAll() }
+                } label: {
+                    Label(
+                        store.isRefreshingAll ? "刷新全部中" : "刷新全部持仓",
+                        systemImage: "arrow.clockwise"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.refreshingInvestorID != nil || store.isRefreshingAll)
+            }
+            .padding(22)
+
+            HStack(spacing: 8) {
+                Label("SEC 13F 变化", systemImage: "arrow.triangle.2.circlepath")
+                Text("基于最近两期申报；不是实时持仓")
+                Text("·")
+                Text("已加载 \(store.portfolios.count)/\(InvestorPreset.featured.count) 位投资者")
+                if let message = store.statusMessage {
+                    Text("·")
+                    Text(message)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 22)
+            .padding(.bottom, 14)
+
+            Divider()
+            consensusContent
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task {
+            await store.refreshAllIfStale()
+        }
+    }
+
+    @ViewBuilder
+    private var consensusContent: some View {
+        let consensus = InvestorConsensusBuilder.build(
+            investors: InvestorPreset.featured,
+            portfolios: store.portfolios
+        )
+
+        if consensus.isEmpty {
+            ContentUnavailableView {
+                Label("暂无持仓变化共识", systemImage: "chart.bar.xaxis")
+            } description: {
+                Text("请先刷新全部持仓；系统需要至少两期 SEC 13F 才能识别增持、减持、新增或清仓。")
+            } actions: {
+                Button("刷新全部持仓") {
+                    Task { await store.refreshAll() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.refreshingInvestorID != nil || store.isRefreshingAll)
+            }
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(consensus) { item in
+                        consensusRow(item)
+                        Divider()
+                    }
+                }
+                .padding(.horizontal, 22)
+            }
+        }
+    }
+
+    private func consensusRow(_ item: InvestorConsensus) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(item.ticker ?? item.cusip)
+                    .font(.headline.monospaced())
+                if let localizedName = item.localizedName,
+                   localizedName.range(of: #"\p{Han}"#, options: .regularExpression) != nil {
+                    Text(localizedName)
+                        .font(.headline.weight(.medium))
+                }
+                Text(item.issuer)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Text(item.signalTitle)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(consensusColor(item))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(consensusColor(item).opacity(0.12), in: Capsule())
+            }
+
+            HStack(spacing: 14) {
+                Text("当前持有 \(item.holderCount) 位")
+                Text("合计占比 \(percent(item.aggregateWeight))")
+                if item.latestValueUSD > 0,
+                   let currencyCode = item.currencyCode {
+                    Text("申报值 \(money(item.latestValueUSD, currencyCode: currencyCode))")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack(alignment: .top, spacing: 16) {
+                if !item.buyers.isEmpty {
+                    Label("买入：\(item.buyers.joined(separator: "、"))", systemImage: "arrow.up.right")
+                        .foregroundStyle(.red)
+                }
+                if !item.sellers.isEmpty {
+                    Label("卖出：\(item.sellers.joined(separator: "、"))", systemImage: "arrow.down.right")
+                        .foregroundStyle(.green)
+                }
+            }
+            .font(.caption)
+        }
+        .padding(.vertical, 14)
+        .textSelection(.enabled)
+        .contextMenu {
+            if let ticker = item.ticker {
+                Button("复制代码") { copyToPasteboard(ticker) }
+            }
+            Button("复制英文公司名") { copyToPasteboard(item.issuer) }
+        }
+    }
+
+    private func consensusColor(_ item: InvestorConsensus) -> Color {
+        if item.buyers.count >= item.sellers.count, !item.buyers.isEmpty { return .red }
+        if !item.sellers.isEmpty { return .green }
+        return .secondary
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    private func percent(_ value: Double) -> String {
+        value.formatted(.percent.precision(.fractionLength(1)))
+    }
+
+    private func money(_ value: Int64, currencyCode: String) -> String {
+        let symbol = currencyCode == "CNY" ? "¥" : "$"
+        if value >= 1_000_000_000 {
+            return symbol + (Double(value) / 1_000_000_000).formatted(
+                .number.precision(.fractionLength(1))
+            ) + "B"
+        }
+        if value >= 1_000_000 {
+            return symbol + (Double(value) / 1_000_000).formatted(
+                .number.precision(.fractionLength(1))
+            ) + "M"
+        }
+        return symbol + value.formatted(.number)
     }
 }
 
@@ -531,6 +767,8 @@ private struct InvestorWritingDetail: View {
     @Environment(\.openURL) private var openURL
     @State private var isSummarizing = false
     @State private var summaryError: String?
+    @State private var isTranslating = false
+    @State private var translationError: String?
     let writing: InvestorWriting
 
     private var currentWriting: InvestorWriting {
@@ -591,6 +829,62 @@ private struct InvestorWritingDetail: View {
                         .lineSpacing(4)
                         .textSelection(.enabled)
                 }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("AI 中文翻译", systemImage: "character.book.closed.fill")
+                            .font(.headline)
+                        Spacer()
+                        if let translation = currentWriting.aiTranslation {
+                            Text(translation.provider.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("重新翻译") {
+                                store.clearTranslation(
+                                    writingID: currentWriting.id,
+                                    investorID: currentWriting.investorID
+                                )
+                                Task { await generateTranslation() }
+                            }
+                            .font(.caption)
+                            .disabled(isTranslating)
+                        }
+                    }
+
+                    if let translation = currentWriting.aiTranslation {
+                        MarkdownText(translation.content)
+                            .lineSpacing(6)
+                            .textSelection(.enabled)
+                        Text(
+                            "翻译于 \(translation.generatedAt.formatted(date: .abbreviated, time: .shortened))"
+                                + " · AI 翻译可能有误，请结合原文核验"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    } else if isTranslating {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("正在读取原文并翻译为中文…")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if let translationError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(translationError, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Button("重试") {
+                                Task { await generateTranslation() }
+                            }
+                        }
+                    } else {
+                        Button {
+                            Task { await generateTranslation() }
+                        } label: {
+                            Label("翻译为中文", systemImage: "character.book.closed.fill")
+                        }
+                    }
+                }
+                .padding(16)
+                .background(.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -689,6 +983,25 @@ private struct InvestorWritingDetail: View {
             )
         } catch {
             summaryError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func generateTranslation() async {
+        guard !isTranslating else { return }
+        isTranslating = true
+        translationError = nil
+        defer { isTranslating = false }
+
+        do {
+            let translation = try await AISummaryService().translate(currentWriting)
+            store.saveTranslation(
+                translation,
+                writingID: currentWriting.id,
+                investorID: currentWriting.investorID
+            )
+        } catch {
+            translationError = error.localizedDescription
         }
     }
 }

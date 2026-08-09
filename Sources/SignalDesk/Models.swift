@@ -106,6 +106,7 @@ struct SignalEvent: Identifiable, Codable, Hashable {
     var isRead = false
     var isBookmarked = false
     var aiSummary: AISummary?
+    var aiTranslation: AITranslation? = nil
 }
 
 struct AISummary: Codable, Hashable {
@@ -120,6 +121,12 @@ struct AISummary: Codable, Hashable {
             "# 原文覆盖说明"
         ].allSatisfy(content.contains)
     }
+}
+
+struct AITranslation: Codable, Hashable {
+    var content: String
+    var provider: AISummaryProvider
+    var generatedAt: Date
 }
 
 enum AISummaryProvider: String, Codable, CaseIterable, Identifiable {
@@ -160,6 +167,7 @@ struct AppSnapshot: Codable {
     var lastRefreshAt: Date?
     var installedCatalogIDs: [String]? = nil
     var dailyBrief: DailyBrief? = nil
+    var dailyBriefs: [DailyBrief]? = nil
 }
 
 enum AppSection: String, CaseIterable, Identifiable, Hashable {

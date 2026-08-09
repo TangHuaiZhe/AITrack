@@ -31,7 +31,8 @@ struct PersonPreset: Identifiable, Hashable {
                 role: feed.role,
                 topics: variables,
                 sourceKind: .rss,
-                feedURL: feed.url
+                feedURL: feed.url,
+                requiredTitleTerms: feed.requiredTitleTerms
             )
         }
         return result
@@ -79,6 +80,7 @@ struct PresetFeed: Hashable {
     var label: String
     var role: String
     var url: String
+    var requiredTitleTerms: [String]? = nil
 }
 
 extension PersonPreset {
@@ -165,7 +167,14 @@ extension PersonPreset {
             defaultDomains: [.robotics],
             xUsername: "drfeifei",
             xNote: "本人 X · 直接观点与研究输出",
-            feeds: []
+            feeds: [
+                PresetFeed(
+                    label: "a16z 播客与访谈",
+                    role: "a16z 官方播客与访谈；重点追踪空间智能、具身智能与机器人",
+                    url: a16zFeiFeiFeed(),
+                    requiredTitleTerms: ["Fei-Fei Li", "Li Fei-Fei", "李飞飞"]
+                )
+            ]
         ),
         PersonPreset(
             id: "andrej-karpathy",
@@ -255,5 +264,16 @@ extension PersonPreset {
 
     private static func youtubeFeed(_ channelID: String) -> String {
         "https://www.youtube.com/feeds/videos.xml?channel_id=\(channelID)"
+    }
+
+    private static func a16zFeiFeiFeed() -> String {
+        var components = URLComponents(string: "https://news.google.com/rss/search")!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "site:a16z.com/podcast (\"Fei-Fei Li\" OR \"Li Fei-Fei\")"),
+            URLQueryItem(name: "hl", value: "en-US"),
+            URLQueryItem(name: "gl", value: "US"),
+            URLQueryItem(name: "ceid", value: "US:en")
+        ]
+        return components.url!.absoluteString
     }
 }

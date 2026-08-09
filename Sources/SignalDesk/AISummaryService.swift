@@ -77,17 +77,63 @@ struct AISummaryService {
     }
 
     func summarizePrompt(_ prompt: String) async throws -> AISummary {
+        try await generate(prompt: prompt, instructions: Self.systemInstructions)
+    }
+
+    func translate(_ event: SignalEvent) async throws -> AITranslation {
+        let articleText = await ArticleContentFetcher().content(for: event)
+        guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
+        let result = try await generate(
+            prompt: Self.translationPrompt(
+                title: event.title,
+                sourceName: event.sourceName,
+                summary: event.summary,
+                articleText: Self.truncated(articleText, for: mode)
+            ),
+            instructions: Self.translationInstructions
+        )
+        return AITranslation(
+            content: result.content,
+            provider: result.provider,
+            generatedAt: result.generatedAt
+        )
+    }
+
+    func translate(_ writing: InvestorWriting) async throws -> AITranslation {
+        let articleText = await ArticleContentFetcher().content(
+            title: writing.title,
+            summary: writing.sourceNote,
+            rawURL: writing.sourceURL
+        )
+        guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
+        let result = try await generate(
+            prompt: Self.translationPrompt(
+                title: writing.title,
+                sourceName: writing.publisher,
+                summary: writing.sourceNote,
+                articleText: Self.truncated(articleText, for: mode)
+            ),
+            instructions: Self.translationInstructions
+        )
+        return AITranslation(
+            content: result.content,
+            provider: result.provider,
+            generatedAt: result.generatedAt
+        )
+    }
+
+    private func generate(prompt: String, instructions: String) async throws -> AISummary {
         switch mode {
         case .deepSeek:
-            return try await summarizeWithDeepSeek(prompt: prompt)
+            return try await summarizeWithDeepSeek(prompt: prompt, instructions: instructions)
         case .ollama:
-            return try await summarizeWithOllama(prompt: prompt)
+            return try await summarizeWithOllama(prompt: prompt, instructions: instructions)
         case .localFirst:
             do {
-                return try await summarizeOnDevice(prompt: prompt)
+                return try await summarizeOnDevice(prompt: prompt, instructions: instructions)
             } catch let appleError {
                 do {
-                    return try await summarizeWithOllama(prompt: prompt)
+                    return try await summarizeWithOllama(prompt: prompt, instructions: instructions)
                 } catch let ollamaError {
                     throw AISummaryError.localProvidersUnavailable(
                         "Apple：\(appleError.localizedDescription)；Ollama：\(ollamaError.localizedDescription)"
@@ -117,7 +163,7 @@ struct AISummaryService {
         return "需要 macOS 26 或更高版本"
     }
 
-    private func summarizeOnDevice(prompt: String) async throws -> AISummary {
+    private func summarizeOnDevice(prompt: String, instructions: String) async throws -> AISummary {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             let model = SystemLanguageModel.default
@@ -125,7 +171,7 @@ struct AISummaryService {
             case .available:
                 let session = LanguageModelSession(
                     model: model,
-                    instructions: Self.systemInstructions
+                    instructions: instructions
                 )
                 let response = try await session.respond(to: prompt)
                 return AISummary(
@@ -147,24 +193,26 @@ struct AISummaryService {
         throw AISummaryError.localModelRequiresMacOS26
     }
 
-    private func summarizeWithDeepSeek(prompt: String) async throws -> AISummary {
+    private func summarizeWithDeepSeek(prompt: String, instructions: String) async throws -> AISummary {
         guard let key = KeychainStore.deepSeekAPIKey, !key.isEmpty else {
             throw AISummaryError.missingDeepSeekKey
         }
         let content = try await DeepSeekClient().summarize(
             prompt: prompt,
-            apiKey: key
+            apiKey: key,
+            systemInstructions: instructions
         )
         return AISummary(content: content, provider: .deepSeek, generatedAt: Date())
     }
 
-    private func summarizeWithOllama(prompt: String) async throws -> AISummary {
+    private func summarizeWithOllama(prompt: String, instructions: String) async throws -> AISummary {
         let configured = UserDefaults.standard.string(forKey: Self.ollamaModelDefaultsKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let model = configured.flatMap { $0.isEmpty ? nil : $0 } ?? Self.defaultOllamaModel
         let content = try await OllamaClient().summarize(
             prompt: prompt,
-            model: model
+            model: model,
+            systemInstructions: instructions
         )
         return AISummary(content: content, provider: .ollama, generatedAt: Date())
     }
@@ -173,6 +221,12 @@ struct AISummaryService {
     你是一名严谨的中文科技与投资情报分析师。你的任务是完整覆盖给定材料，而不是只写几句摘要。
     只依据给定材料，不补造事实；区分作者/受访者原话、媒体转述与分析推断，材料不足时明确说明。
     保留材料中的公司名、人名、数字、时间、因果关系和限定条件。输出结构化 Markdown，不使用 Markdown 表格。
+    """
+
+    private static let translationInstructions = """
+    你是一名严谨的中文科技与投资材料翻译。只翻译给定材料，不总结、不解释、不补充事实。
+    输出简体中文译文，保留原文的段落、列表、Markdown 标记、公司名、人名、数字、日期、单位和限定条件。
+    专有名词首次出现时可保留英文括注；无法确定的术语保留原文，不要臆造译法。
     """
 
     static func prompt(event: SignalEvent, articleText: String) -> String {
@@ -205,6 +259,41 @@ struct AISummaryService {
         来源已有简介：\(event.summary)
         本次送入模型的材料长度：\(articleText.count) 字
         抓取内容（请完整覆盖以下材料）：
+        \(articleText)
+        """
+    }
+
+    static func translationPrompt(event: SignalEvent, articleText: String) -> String {
+        translationPrompt(
+            title: event.title,
+            sourceName: event.sourceName,
+            summary: event.summary,
+            articleText: articleText
+        )
+    }
+
+    static func translationPrompt(writing: InvestorWriting, articleText: String) -> String {
+        translationPrompt(
+            title: writing.title,
+            sourceName: writing.publisher,
+            summary: writing.sourceNote,
+            articleText: articleText
+        )
+    }
+
+    private static func translationPrompt(
+        title: String,
+        sourceName: String,
+        summary: String,
+        articleText: String
+    ) -> String {
+        """
+        请将下面来自 \(sourceName) 的材料完整翻译为简体中文。
+        只输出译文，不要输出“翻译如下”、摘要、评论、解释或翻译过程。
+        不要删减内容；保留段落、列表、Markdown 标记、数字、时间、公司名、人名、单位和语气限定。
+        标题：\(title)
+        来源简介：\(summary)
+        原文材料：
         \(articleText)
         """
     }
@@ -414,7 +503,11 @@ struct ArticleContentFetcher {
 }
 
 struct DeepSeekClient {
-    func summarize(prompt: String, apiKey: String) async throws -> String {
+    func summarize(
+        prompt: String,
+        apiKey: String,
+        systemInstructions: String = "你是一名严谨的中文科技与投资情报分析师，只依据材料总结。"
+    ) async throws -> String {
         guard let url = URL(string: "https://api.deepseek.com/chat/completions") else {
             throw FeedError.invalidURL
         }
@@ -427,7 +520,7 @@ struct DeepSeekClient {
             DeepSeekRequest(
                 model: "deepseek-v4-flash",
                 messages: [
-                    .init(role: "system", content: "你是一名严谨的中文科技与投资情报分析师，只依据材料总结。"),
+                    .init(role: "system", content: systemInstructions),
                     .init(role: "user", content: prompt)
                 ],
                 thinking: .init(type: "disabled"),
@@ -494,7 +587,11 @@ struct OllamaClient {
         }
     }
 
-    func summarize(prompt: String, model: String) async throws -> String {
+    func summarize(
+        prompt: String,
+        model: String,
+        systemInstructions: String = "你是一名严谨的中文科技与投资情报分析师，只依据材料总结。"
+    ) async throws -> String {
         let installed = try await installedModels()
         guard installed.contains(where: { $0 == model || $0.hasPrefix("\(model):") }) else {
             throw AISummaryError.ollamaUnavailable(
@@ -511,7 +608,7 @@ struct OllamaClient {
             OllamaRequest(
                 model: model,
                 messages: [
-                    .init(role: "system", content: "你是一名严谨的中文科技与投资情报分析师，只依据材料总结。"),
+                    .init(role: "system", content: systemInstructions),
                     .init(role: "user", content: prompt)
                 ],
                 stream: false,

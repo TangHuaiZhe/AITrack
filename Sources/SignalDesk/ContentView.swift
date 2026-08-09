@@ -10,9 +10,11 @@ struct ContentView: View {
     @State private var query = ""
     @State private var category: SignalCategory?
     @State private var selectedTopic: SignalDomain?
-    @State private var selectedSourceID: UUID?
+    @State private var selectedSourceGroupKey: String?
     @State private var expandedSourceSections: Set<AppSection> = [.inbox, .xFeed, .rssFeed]
+    @State private var selectedDailyBriefID: String?
     @State private var selectedInvestorID = InvestorPreset.featured.first?.id
+    @State private var selectedInvestorTab = InvestorPageTab.investors
 
     var body: some View {
         NavigationSplitView {
@@ -21,9 +23,12 @@ struct ContentView: View {
             if section == .sources {
                 SourcesView(showingAddSource: $showingAddSource)
             } else if section == .dailyBrief {
-                DailyBriefIndexView()
+                DailyBriefIndexView(selection: $selectedDailyBriefID)
             } else if section == .investors {
-                InvestorListView(selection: $selectedInvestorID)
+                InvestorListView(
+                    selection: $selectedInvestorID,
+                    selectedTab: $selectedInvestorTab
+                )
             } else if section == .settings {
                 SettingsView()
             } else {
@@ -40,7 +45,7 @@ struct ContentView: View {
             section = .settings
             selection = nil
             selectedTopic = nil
-            selectedSourceID = nil
+            selectedSourceGroupKey = nil
         }
         .task {
             await store.refresh()
@@ -104,7 +109,7 @@ struct ContentView: View {
                             .buttonStyle(.plain)
                         }
                         .listRowBackground(
-                            section == item && (selectedSourceID == nil || !expandedSourceSections.contains(item))
+                            section == item && (selectedSourceGroupKey == nil || !expandedSourceSections.contains(item))
                                 ? Color.accentColor.opacity(0.15)
                                 : Color.clear
                         )
@@ -127,18 +132,18 @@ struct ContentView: View {
                     }
 
                     if isSourceSection(item) && expandedSourceSections.contains(item) {
-                        ForEach(sources(for: item)) { source in
+                        ForEach(sourceGroups(for: item)) { group in
                             Button {
-                                selectSource(source.id, in: item)
+                                selectSourceGroup(group.key, in: item)
                             } label: {
                                 HStack(spacing: 7) {
                                     Circle()
-                                        .fill(source.isEnabled ? Color.blue : Color.secondary)
+                                        .fill(group.sources.contains(where: { $0.isEnabled }) ? Color.blue : Color.secondary)
                                         .frame(width: 6, height: 6)
-                                    Text(source.name)
+                                    Text(group.key)
                                         .lineLimit(1)
                                     Spacer()
-                                    let unread = unreadCount(for: source.id)
+                                    let unread = unreadCount(for: group)
                                     if unread > 0 {
                                         Text("\(unread)")
                                             .font(.caption2.monospacedDigit())
@@ -150,7 +155,7 @@ struct ContentView: View {
                             .buttonStyle(.plain)
                             .padding(.leading, 23)
                             .listRowBackground(
-                                section == item && selectedSourceID == source.id
+                                section == item && selectedSourceGroupKey == group.key
                                     ? Color.accentColor.opacity(0.12)
                                     : Color.clear
                             )
@@ -282,10 +287,14 @@ struct ContentView: View {
         if section == .investors {
             ZStack(alignment: .topLeading) {
                 Color(nsColor: .controlBackgroundColor)
-                InvestorPortfolioView(investorID: selectedInvestorID)
+                if selectedInvestorTab == .consensus {
+                    InvestorConsensusView()
+                } else {
+                    InvestorPortfolioView(investorID: selectedInvestorID)
+                }
             }
         } else if section == .dailyBrief {
-            DailyBriefView()
+            DailyBriefView(selection: $selectedDailyBriefID)
         } else if let event = selectedEvent {
             EventDetail(event: event)
                 .onChange(of: event.id, initial: true) { _, eventID in
@@ -313,13 +322,13 @@ struct ContentView: View {
             let sectionMatches: Bool
             switch section {
             case .inbox:
-                sectionMatches = selectedSourceID == nil || selectedSourceID == event.sourceID
+                sectionMatches = selectedSourceGroupKey == nil || selectedSourceGroupKey == sourceGroupKey(for: event.sourceID)
             case .xFeed:
                 sectionMatches = xSourceIDs.contains(event.sourceID) &&
-                    (selectedSourceID == nil || selectedSourceID == event.sourceID)
+                    (selectedSourceGroupKey == nil || selectedSourceGroupKey == sourceGroupKey(for: event.sourceID))
             case .rssFeed:
                 sectionMatches = rssSourceIDs.contains(event.sourceID) &&
-                    (selectedSourceID == nil || selectedSourceID == event.sourceID)
+                    (selectedSourceGroupKey == nil || selectedSourceGroupKey == sourceGroupKey(for: event.sourceID))
             case .highValue: sectionMatches = event.importance >= 75
             case .bookmarks: sectionMatches = event.isBookmarked
             default: sectionMatches = true
@@ -358,15 +367,14 @@ struct ContentView: View {
     }
 
     private var selectedSourceName: String? {
-        guard let selectedSourceID else { return nil }
-        return store.sources.first { $0.id == selectedSourceID }?.name
+        selectedSourceGroupKey
     }
 
     private func isSourceSection(_ section: AppSection) -> Bool {
         section == .inbox || section == .xFeed || section == .rssFeed
     }
 
-    private func sources(for section: AppSection) -> [TrackedSource] {
+    private func sourceGroups(for section: AppSection) -> [SourceGroup] {
         let kind: SourceKind?
         switch section {
         case .inbox: kind = nil
@@ -374,20 +382,31 @@ struct ContentView: View {
         case .rssFeed: kind = .rss
         default: kind = nil
         }
-        return store.sources
+        let filteredSources = store.sources
             .filter { kind == nil || $0.sourceKind == kind }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let grouped = Dictionary(grouping: filteredSources, by: sourceGroupKey)
+        return grouped.map { key, sources in
+            SourceGroup(
+                key: key,
+                sources: sources.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            )
+        }
+        .sorted {
+            $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending
+        }
     }
 
     private func selectSection(_ section: AppSection) {
         self.section = section
-        selectedSourceID = nil
+        selectedSourceGroupKey = nil
         selection = nil
     }
 
-    private func selectSource(_ sourceID: UUID, in section: AppSection) {
+    private func selectSourceGroup(_ groupKey: String, in section: AppSection) {
         self.section = section
-        selectedSourceID = sourceID
+        selectedSourceGroupKey = groupKey
         selection = nil
     }
 
@@ -399,10 +418,22 @@ struct ContentView: View {
         }
     }
 
-    private func unreadCount(for sourceID: UUID) -> Int {
-        store.events.filter {
-            $0.sourceID == sourceID && !$0.isRead
+    private func unreadCount(for group: SourceGroup) -> Int {
+        store.events.filter { event in
+            group.sources.contains { source in source.id == event.sourceID } && !event.isRead
         }.count
+    }
+
+    private func sourceGroupKey(_ source: TrackedSource) -> String {
+        sourceGroupKey(for: source.name)
+    }
+
+    private func sourceGroupKey(for sourceID: UUID) -> String? {
+        store.sources.first { $0.id == sourceID }.map(sourceGroupKey)
+    }
+
+    private func sourceGroupKey(for name: String) -> String {
+        name.components(separatedBy: " · ").first ?? name
     }
 
     @ViewBuilder
@@ -458,7 +489,7 @@ struct ContentView: View {
         Button {
             selectedTopic = selectedTopic == domain ? nil : domain
             section = .inbox
-            selectedSourceID = nil
+            selectedSourceGroupKey = nil
             selection = nil
         } label: {
             HStack {
@@ -490,6 +521,13 @@ struct ContentView: View {
         case .investmentBusiness: .green
         }
     }
+}
+
+private struct SourceGroup: Identifiable {
+    let key: String
+    let sources: [TrackedSource]
+
+    var id: String { key }
 }
 
 private struct EventRow: View {
@@ -576,6 +614,8 @@ private struct EventDetail: View {
     @Environment(\.openURL) private var openURL
     @State private var isSummarizing = false
     @State private var summaryError: String?
+    @State private var isTranslating = false
+    @State private var translationError: String?
     let event: SignalEvent
 
     var body: some View {
@@ -629,6 +669,58 @@ private struct EventDetail: View {
                         .lineSpacing(5)
                         .textSelection(.enabled)
                 }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("AI 中文翻译", systemImage: "character.book.closed.fill")
+                            .font(.headline)
+                        Spacer()
+                        if let translation = event.aiTranslation {
+                            Text(translation.provider.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("重新翻译") {
+                                store.clearTranslation(for: event.id)
+                                Task { await generateTranslation() }
+                            }
+                            .font(.caption)
+                            .disabled(isTranslating)
+                        }
+                    }
+
+                    if let translation = event.aiTranslation {
+                        MarkdownText(translation.content)
+                            .font(.body)
+                            .lineSpacing(6)
+                            .textSelection(.enabled)
+                        Text("翻译于 \(translation.generatedAt.formatted(date: .abbreviated, time: .shortened)) · AI 翻译可能有误，请结合原文核验")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } else if isTranslating {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("正在抓取正文并翻译为中文…")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if let translationError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(translationError, systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                            Button("重试") {
+                                Task { await generateTranslation() }
+                            }
+                        }
+                    } else {
+                        Button {
+                            Task { await generateTranslation() }
+                        } label: {
+                            Label("翻译为中文", systemImage: "character.book.closed.fill")
+                        }
+                    }
+                }
+                .padding(16)
+                .background(.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -724,6 +816,21 @@ private struct EventDetail: View {
             store.saveSummary(summary, for: event.id)
         } catch {
             summaryError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func generateTranslation() async {
+        guard !isTranslating else { return }
+        isTranslating = true
+        translationError = nil
+        defer { isTranslating = false }
+
+        do {
+            let translation = try await AISummaryService().translate(event)
+            store.saveTranslation(translation, for: event.id)
+        } catch {
+            translationError = error.localizedDescription
         }
     }
 

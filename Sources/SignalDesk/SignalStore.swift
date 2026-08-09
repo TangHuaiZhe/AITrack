@@ -7,7 +7,7 @@ final class SignalStore: ObservableObject {
     @Published private(set) var sources: [TrackedSource] = []
     @Published private(set) var events: [SignalEvent] = []
     @Published private(set) var lastRefreshAt: Date?
-    @Published private(set) var dailyBrief: DailyBrief?
+    @Published private(set) var dailyBriefs: [DailyBrief] = []
     @Published var isGeneratingDailyBrief = false
     @Published var isRefreshing = false
     @Published var statusMessage: String?
@@ -16,6 +16,7 @@ final class SignalStore: ObservableObject {
     private let stateURL: URL
     private var installedCatalogIDs = Set<String>()
     private static let requestedPeopleCatalogID = "ai-robotics-longform-v4"
+    private static let feiFeiA16ZCatalogID = "fei-fei-li-a16z-v1"
     private static let rayDalioCatalogID = "ray-dalio-v1"
     private static let domainTaxonomyID = "signal-domains-v3"
     private static let researchSourcesCatalogID = "research-sources-v1"
@@ -24,6 +25,7 @@ final class SignalStore: ObservableObject {
         self.stateURL = stateURL ?? Self.defaultStateURL
         load()
         installRequestedPeopleIfNeeded()
+        installFeiFeiA16ZIfNeeded()
         installRayDalioIfNeeded()
         installResearchSourcesIfNeeded()
         installDomainTaxonomyIfNeeded()
@@ -31,6 +33,7 @@ final class SignalStore: ObservableObject {
 
     var unreadCount: Int { events.filter { !$0.isRead }.count }
     var highValueCount: Int { events.filter { $0.importance >= 75 }.count }
+    var dailyBrief: DailyBrief? { dailyBriefs.first }
 
     func add(_ source: TrackedSource) {
         sources.append(source)
@@ -113,6 +116,18 @@ final class SignalStore: ObservableObject {
         save()
     }
 
+    func saveTranslation(_ translation: AITranslation, for id: String) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        events[index].aiTranslation = translation
+        save()
+    }
+
+    func clearTranslation(for id: String) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        events[index].aiTranslation = nil
+        save()
+    }
+
     func clearSummary(for id: String) {
         guard let index = events.firstIndex(where: { $0.id == id }) else { return }
         events[index].aiSummary = nil
@@ -169,16 +184,19 @@ final class SignalStore: ObservableObject {
                 $0.publishedAt >= windowStart && $0.publishedAt <= windowEnd
             }
             let news = try await NewsSearchClient().search(now: now)
-            dailyBrief = try await DailyBriefService().generate(
+            let brief = try await DailyBriefService().generate(
                 events: recentEvents,
                 news: news,
                 windowStart: windowStart,
                 windowEnd: windowEnd
             )
-            statusMessage = "每日快报已更新 · (recentEvents.count) 条情报 · (news.count) 条新闻"
+            dailyBriefs.removeAll { $0.id == brief.id }
+            dailyBriefs.append(brief)
+            dailyBriefs.sort { $0.generatedAt > $1.generatedAt }
+            statusMessage = "每日快报已更新 · \(recentEvents.count) 条情报 · \(news.count) 条新闻"
             save()
         } catch {
-            statusMessage = "每日快报生成失败：(error.localizedDescription)"
+            statusMessage = "每日快报生成失败：\(error.localizedDescription)"
         }
     }
 
@@ -189,6 +207,7 @@ final class SignalStore: ObservableObject {
         defer { isRefreshing = false }
 
         var added: [SignalEvent] = []
+        var committedAddedIDs = Set<String>()
         var failures: [String] = []
         let enabledSources = sources.filter(\.isEnabled)
         let batchesBrightDataX = XProvider.selected == .brightData
@@ -206,6 +225,13 @@ final class SignalStore: ObservableObject {
                     if let index = sources.firstIndex(where: { $0.id == source.id }) {
                         sources[index].lastCheckedAt = Date()
                     }
+                }
+                let xAdded = added
+                if !xAdded.isEmpty {
+                    events.append(contentsOf: xAdded)
+                    committedAddedIDs.formUnion(xAdded.map(\.id))
+                    events = trimEvents(events)
+                    save()
                 }
             } catch {
                 failures.append(contentsOf: brightDataXSources.map {
@@ -232,9 +258,8 @@ final class SignalStore: ObservableObject {
             }
         }
 
-        events.append(contentsOf: added)
-        events.sort { $0.publishedAt > $1.publishedAt }
-        if events.count > 600 { events = Array(events.prefix(600)) }
+        events.append(contentsOf: added.filter { !committedAddedIDs.contains($0.id) })
+        events = trimEvents(events)
         lastRefreshAt = Date()
 
         if failures.isEmpty {
@@ -252,9 +277,14 @@ final class SignalStore: ObservableObject {
             let data = try Data(contentsOf: stateURL)
             let snapshot = try JSONDecoder.signalDesk.decode(AppSnapshot.self, from: data)
             sources = snapshot.sources
-            events = Array(snapshot.events.sorted { $0.publishedAt > $1.publishedAt }.prefix(600))
+            events = trimEvents(snapshot.events)
             lastRefreshAt = snapshot.lastRefreshAt
-            dailyBrief = snapshot.dailyBrief
+            var briefs = snapshot.dailyBriefs ?? []
+            if let legacyBrief = snapshot.dailyBrief,
+               !briefs.contains(where: { $0.id == legacyBrief.id }) {
+                briefs.append(legacyBrief)
+            }
+            dailyBriefs = briefs.sorted { $0.generatedAt > $1.generatedAt }
             installedCatalogIDs = Set(snapshot.installedCatalogIDs ?? [])
         } catch {
             sources = TrackedSource.starterSources
@@ -274,7 +304,8 @@ final class SignalStore: ObservableObject {
                 events: events,
                 lastRefreshAt: lastRefreshAt,
                 installedCatalogIDs: Array(installedCatalogIDs).sorted(),
-                dailyBrief: dailyBrief
+                dailyBrief: dailyBrief,
+                dailyBriefs: dailyBriefs
             )
             let data = try JSONEncoder.signalDesk.encode(snapshot)
             try data.write(to: stateURL, options: .atomic)
@@ -323,6 +354,19 @@ final class SignalStore: ObservableObject {
         ]
     }
 
+    private func trimEvents(_ candidates: [SignalEvent]) -> [SignalEvent] {
+        let sorted = candidates.sorted { $0.publishedAt > $1.publishedAt }
+        let xSourceIDs = Set(sources.filter { $0.sourceKind == .x }.map(\.id))
+        let rssSourceIDs = Set(sources.filter { $0.sourceKind == .rss }.map(\.id))
+        let xEvents = sorted.filter { xSourceIDs.contains($0.sourceID) }.prefix(1_000)
+        let rssEvents = sorted.filter { rssSourceIDs.contains($0.sourceID) }.prefix(1_000)
+        let otherEvents = sorted.filter {
+            !xSourceIDs.contains($0.sourceID) && !rssSourceIDs.contains($0.sourceID)
+        }.prefix(600)
+        return (Array(xEvents) + Array(rssEvents) + Array(otherEvents))
+            .sorted { $0.publishedAt > $1.publishedAt }
+    }
+
     private func installRequestedPeopleIfNeeded() {
         guard installedCatalogIDs.insert(Self.requestedPeopleCatalogID).inserted else { return }
 
@@ -367,6 +411,25 @@ final class SignalStore: ObservableObject {
         }
         if added > 0 {
             statusMessage = "已新增瑞·达利欧的 \(added) 个情报来源"
+        }
+        save()
+    }
+
+    private func installFeiFeiA16ZIfNeeded() {
+        guard installedCatalogIDs.insert(Self.feiFeiA16ZCatalogID).inserted,
+              let feiFeiLi = PersonPreset.aiRoboticsLeaders.first(where: { $0.id == "fei-fei-li" }) else {
+            return
+        }
+
+        var keys = Set(sources.map(Self.sourceKey))
+        var added = 0
+        for source in feiFeiLi.trackedSources().filter({ $0.name.contains("a16z") }) {
+            guard keys.insert(Self.sourceKey(source)).inserted else { continue }
+            sources.append(source)
+            added += 1
+        }
+        if added > 0 {
+            statusMessage = "已新增李飞飞的 a16z 播客与访谈来源"
         }
         save()
     }

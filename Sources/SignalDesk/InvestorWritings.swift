@@ -49,6 +49,7 @@ struct InvestorWriting: Identifiable, Codable, Equatable {
     var sourceNote: String
     var displaysYearOnly: Bool? = nil
     var aiSummary: AISummary?
+    var aiTranslation: AITranslation? = nil
 }
 
 enum InvestorWritingCatalog {
@@ -418,6 +419,22 @@ final class InvestorWritingStore: ObservableObject {
         save()
     }
 
+    func saveTranslation(_ translation: AITranslation, writingID: String, investorID: String) {
+        guard let index = writingsByInvestor[investorID]?.firstIndex(where: { $0.id == writingID }) else {
+            return
+        }
+        writingsByInvestor[investorID]?[index].aiTranslation = translation
+        save()
+    }
+
+    func clearTranslation(writingID: String, investorID: String) {
+        guard let index = writingsByInvestor[investorID]?.firstIndex(where: { $0.id == writingID }) else {
+            return
+        }
+        writingsByInvestor[investorID]?[index].aiTranslation = nil
+        save()
+    }
+
     private func installCuratedWritings() {
         for investor in InvestorPreset.featured {
             let curated = InvestorWritingCatalog.curated(for: investor.id)
@@ -448,6 +465,7 @@ final class InvestorWritingStore: ObservableObject {
         for writing in incoming {
             var merged = writing
             merged.aiSummary = merged.aiSummary ?? byID[writing.id]?.aiSummary
+            merged.aiTranslation = merged.aiTranslation ?? byID[writing.id]?.aiTranslation
             byID[writing.id] = merged
         }
         return byID.values.sorted { $0.publishedAt > $1.publishedAt }

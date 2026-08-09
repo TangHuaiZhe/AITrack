@@ -19,7 +19,7 @@ struct ReportedPortfolio: Equatable {
     var holdings: [Holding]
 }
 
-enum HoldingChangeKind: String {
+enum HoldingChangeKind: String, Codable {
     case added
     case exited
     case increased

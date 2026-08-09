@@ -59,6 +59,14 @@ struct AISummaryTests {
         #expect(writingPrompt.contains("# 业绩、估值与关键指标"))
         #expect(writingPrompt.contains("# 与 13F 和后续信息的核对提示"))
         #expect(writingPrompt.contains("完整覆盖以下材料"))
+
+        let translationPrompt = AISummaryService.translationPrompt(
+            event: event,
+            articleText: "The speaker described a five-year roadmap."
+        )
+        #expect(translationPrompt.contains("完整翻译为简体中文"))
+        #expect(translationPrompt.contains("只输出译文"))
+        #expect(translationPrompt.contains("The speaker described a five-year roadmap."))
     }
 
     @Test
@@ -83,6 +91,27 @@ struct AISummaryTests {
                 $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
             }
         )
+    }
+
+    @Test
+    func rendersBlockMarkdownForDailyBriefs() {
+        let markdown = """
+        # 今日结论
+        核心判断。
+
+        ## 影响力最大的新闻
+        - 第一条新闻
+        - 第二条新闻
+        """
+
+        let rendered = MarkdownTextParser.parse(markdown)
+        let plainText = String(rendered.characters)
+
+        #expect(!plainText.contains("# 今日结论"))
+        #expect(!plainText.contains("## 影响力最大的新闻"))
+        #expect(plainText.contains("今日结论"))
+        #expect(plainText.contains("第一条新闻"))
+        #expect(plainText.contains("第二条新闻"))
     }
 
     @Test
@@ -118,6 +147,11 @@ struct AISummaryTests {
             provider: .ollama,
             generatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
+        let translation = AITranslation(
+            content: "本地翻译可用",
+            provider: .ollama,
+            generatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
         let event = SignalEvent(
             id: "summary-test",
             sourceID: UUID(),
@@ -129,7 +163,8 @@ struct AISummaryTests {
             category: .viewpoint,
             importance: 80,
             matchedTopics: ["AI"],
-            aiSummary: summary
+            aiSummary: summary,
+            aiTranslation: translation
         )
 
         let decoded = try JSONDecoder().decode(
@@ -138,6 +173,7 @@ struct AISummaryTests {
         )
 
         #expect(decoded.aiSummary == summary)
+        #expect(decoded.aiTranslation == translation)
     }
 
     @Test

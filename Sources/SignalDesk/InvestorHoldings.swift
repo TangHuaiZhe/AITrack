@@ -1,11 +1,19 @@
 import Foundation
 
 struct InvestorPreset: Identifiable, Hashable {
+    enum HoldingsKind: String, Hashable {
+        case sec13F
+        case chineseFund
+        case unavailable
+    }
+
     var id: String
     var name: String
     var firm: String
     var style: String
     var cik: String
+    var holdingsKind: HoldingsKind = .sec13F
+    var fundCodes: [String] = []
 
     static let featured: [InvestorPreset] = [
         InvestorPreset(
@@ -98,6 +106,90 @@ struct InvestorPreset: Identifiable, Hashable {
             firm: "Akre Capital Management",
             style: "优秀商业、优秀管理与再投资",
             cik: "1112520"
+        ),
+        InvestorPreset(
+            id: "zhang-kun",
+            name: "张坤",
+            firm: "易方达基金",
+            style: "长期价值与高质量消费、互联网企业",
+            cik: "",
+            holdingsKind: .chineseFund,
+            fundCodes: ["005827", "110011"]
+        ),
+        InvestorPreset(
+            id: "fu-pengbo",
+            name: "傅鹏博",
+            firm: "睿远基金",
+            style: "长期成长与价值创造",
+            cik: "",
+            holdingsKind: .chineseFund,
+            fundCodes: ["007119"]
+        ),
+        InvestorPreset(
+            id: "zhao-feng",
+            name: "赵枫",
+            firm: "睿远基金",
+            style: "均衡价值与长期复利",
+            cik: "",
+            holdingsKind: .chineseFund,
+            fundCodes: ["008969"]
+        ),
+        InvestorPreset(
+            id: "liu-yanchun",
+            name: "刘彦春",
+            firm: "景顺长城基金",
+            style: "消费与优秀企业长期持有",
+            cik: "",
+            holdingsKind: .chineseFund,
+            fundCodes: ["260108"]
+        ),
+        InvestorPreset(
+            id: "zhu-shaoxing",
+            name: "朱少醒",
+            firm: "富国基金",
+            style: "长期成长与基本面研究",
+            cik: "",
+            holdingsKind: .chineseFund,
+            fundCodes: ["161005"]
+        ),
+        InvestorPreset(
+            id: "qiu-dongrong",
+            name: "邱栋荣",
+            firm: "中庚基金",
+            style: "深度价值与逆向投资",
+            cik: "",
+            holdingsKind: .chineseFund,
+            fundCodes: ["006551"]
+        ),
+        InvestorPreset(
+            id: "lin-yuan",
+            name: "林园",
+            firm: "林园投资",
+            style: "消费、医药与长期价值投资",
+            cik: "",
+            holdingsKind: .unavailable
+        ),
+        InvestorPreset(
+            id: "dan-bin",
+            name: "但斌",
+            firm: "东方港湾海外基金",
+            style: "全球优质企业与长期复利",
+            cik: "2046333"
+        ),
+        InvestorPreset(
+            id: "duan-yongping",
+            name: "段永平",
+            firm: "H&H International Investment",
+            style: "商业模式、企业家与长期持有",
+            cik: "1759760"
+        ),
+        InvestorPreset(
+            id: "zhang-lei",
+            name: "张磊",
+            firm: "高瓴资本",
+            style: "长期主义与产业投资",
+            cik: "",
+            holdingsKind: .unavailable
         )
     ]
 }
@@ -108,9 +200,66 @@ struct InvestorPortfolio: Identifiable, Codable, Equatable {
     var filingDate: String
     var totalValueUSD: Int64
     var positions: [InvestorPosition]
+    var changes: [InvestorHoldingChange] = []
+    var currencyCode: String = "USD"
     var refreshedAt: Date
 
     var id: String { investorID }
+
+    enum CodingKeys: String, CodingKey {
+        case investorID, reportDate, filingDate, totalValueUSD, positions, changes, currencyCode, refreshedAt
+    }
+
+    init(
+        investorID: String,
+        reportDate: String,
+        filingDate: String,
+        totalValueUSD: Int64,
+        positions: [InvestorPosition],
+        changes: [InvestorHoldingChange] = [],
+        currencyCode: String = "USD",
+        refreshedAt: Date
+    ) {
+        self.investorID = investorID
+        self.reportDate = reportDate
+        self.filingDate = filingDate
+        self.totalValueUSD = totalValueUSD
+        self.positions = positions
+        self.changes = changes
+        self.currencyCode = currencyCode
+        self.refreshedAt = refreshedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            investorID: try container.decode(String.self, forKey: .investorID),
+            reportDate: try container.decode(String.self, forKey: .reportDate),
+            filingDate: try container.decode(String.self, forKey: .filingDate),
+            totalValueUSD: try container.decode(Int64.self, forKey: .totalValueUSD),
+            positions: try container.decode([InvestorPosition].self, forKey: .positions),
+            changes: try container.decodeIfPresent([InvestorHoldingChange].self, forKey: .changes) ?? [],
+            currencyCode: try container.decodeIfPresent(String.self, forKey: .currencyCode) ?? "USD",
+            refreshedAt: try container.decode(Date.self, forKey: .refreshedAt)
+        )
+    }
+}
+
+struct InvestorHoldingChange: Codable, Equatable, Identifiable {
+    var securityKey: String
+    var issuer: String
+    var titleOfClass: String
+    var cusip: String
+    var ticker: String?
+    var localizedName: String? = nil
+    var putCall: String?
+    var kind: HoldingChangeKind
+    var oldShares: Double
+    var newShares: Double
+    var oldValueUSD: Int64
+    var newValueUSD: Int64
+
+    var id: String { securityKey }
 }
 
 struct InvestorPosition: Identifiable, Codable, Equatable {
@@ -194,6 +343,26 @@ enum PortfolioAnalytics {
         let holdings = aggregate(latest.holdings)
             .sorted { $0.valueUSD > $1.valueUSD }
         let totalValue = holdings.reduce(Int64(0)) { $0 + $1.valueUSD }
+        let previous = history
+            .filter { $0.reportDate < latest.reportDate }
+            .max { $0.reportDate < $1.reportDate }
+        let changes = previous.map {
+            HoldingsDiffer.changes(old: $0.holdings, new: latest.holdings).map {
+                InvestorHoldingChange(
+                    securityKey: $0.holding.key,
+                    issuer: $0.holding.issuer,
+                    titleOfClass: $0.holding.titleOfClass,
+                    cusip: $0.holding.cusip,
+                    ticker: cachedTickers[$0.holding.cusip],
+                    putCall: $0.holding.putCall,
+                    kind: $0.kind,
+                    oldShares: $0.oldShares,
+                    newShares: $0.newShares,
+                    oldValueUSD: $0.oldValueUSD,
+                    newValueUSD: $0.newValueUSD
+                )
+            }
+        } ?? []
 
         let positions = holdings.map { holding in
             InvestorPosition(
@@ -221,6 +390,8 @@ enum PortfolioAnalytics {
             filingDate: latest.filingDate,
             totalValueUSD: totalValue,
             positions: positions,
+            changes: changes,
+            currencyCode: "USD",
             refreshedAt: Date()
         )
     }
@@ -352,5 +523,123 @@ enum PortfolioAnalytics {
             return holding.shares
         }
         return holding.shares * factor
+    }
+}
+
+struct InvestorConsensus: Identifiable, Equatable {
+    var securityKey: String
+    var issuer: String
+    var titleOfClass: String
+    var cusip: String
+    var ticker: String?
+    var localizedName: String?
+    var holderCount: Int
+    var aggregateWeight: Double
+    var currentInvestors: [String]
+    var buyers: [String]
+    var sellers: [String]
+    var latestValueUSD: Int64
+    var currencyCode: String?
+
+    var id: String { securityKey }
+
+    var signalTitle: String {
+        if !buyers.isEmpty && sellers.isEmpty {
+            return buyers.count >= 2 ? "一致买入" : "买入"
+        }
+        if !sellers.isEmpty && buyers.isEmpty {
+            return sellers.count >= 2 ? "一致卖出" : "卖出"
+        }
+        if buyers.count > sellers.count { return "买入占优" }
+        if sellers.count > buyers.count { return "卖出占优" }
+        return "分歧"
+    }
+}
+
+enum InvestorConsensusBuilder {
+    static func build(
+        investors: [InvestorPreset],
+        portfolios: [String: InvestorPortfolio]
+    ) -> [InvestorConsensus] {
+        struct Accumulator {
+            var securityKey: String
+            var issuer = ""
+            var titleOfClass = ""
+            var cusip = ""
+            var ticker: String?
+            var localizedName: String?
+            var holderIDs = Set<String>()
+            var aggregateWeight = 0.0
+            var currentInvestors = Set<String>()
+            var buyers = Set<String>()
+            var sellers = Set<String>()
+            var latestValueUSD: Int64 = 0
+            var currencyCodes = Set<String>()
+        }
+
+        var accumulators: [String: Accumulator] = [:]
+        for investor in investors {
+            guard let portfolio = portfolios[investor.id] else { continue }
+
+            for position in portfolio.positions where position.putCall == nil {
+                var accumulator = accumulators[position.securityKey] ?? Accumulator(securityKey: position.securityKey)
+                accumulator.issuer = position.issuer
+                accumulator.titleOfClass = position.titleOfClass
+                accumulator.cusip = position.cusip
+                accumulator.ticker = position.ticker ?? accumulator.ticker
+                accumulator.localizedName = position.localizedName ?? accumulator.localizedName
+                accumulator.holderIDs.insert(investor.id)
+                accumulator.currentInvestors.insert(investor.name)
+                accumulator.aggregateWeight += position.portfolioWeight
+                accumulator.latestValueUSD += position.valueUSD
+                accumulator.currencyCodes.insert(portfolio.currencyCode)
+                accumulators[position.securityKey] = accumulator
+            }
+
+            for change in portfolio.changes where change.putCall == nil {
+                var accumulator = accumulators[change.securityKey] ?? Accumulator(securityKey: change.securityKey)
+                accumulator.issuer = change.issuer
+                accumulator.titleOfClass = change.titleOfClass
+                accumulator.cusip = change.cusip
+                accumulator.ticker = change.ticker ?? accumulator.ticker
+                accumulator.localizedName = change.localizedName ?? accumulator.localizedName
+                accumulator.currencyCodes.insert(portfolio.currencyCode)
+                switch change.kind {
+                case .added, .increased:
+                    accumulator.buyers.insert(investor.name)
+                case .exited, .decreased:
+                    accumulator.sellers.insert(investor.name)
+                }
+                accumulators[change.securityKey] = accumulator
+            }
+        }
+
+        return accumulators.values
+            .filter { !$0.buyers.isEmpty || !$0.sellers.isEmpty }
+            .map {
+                InvestorConsensus(
+                    securityKey: $0.securityKey,
+                    issuer: $0.issuer,
+                    titleOfClass: $0.titleOfClass,
+                    cusip: $0.cusip,
+                    ticker: $0.ticker,
+                    localizedName: $0.localizedName,
+                    holderCount: $0.holderIDs.count,
+                    aggregateWeight: $0.aggregateWeight,
+                    currentInvestors: $0.currentInvestors.sorted(),
+                    buyers: $0.buyers.sorted(),
+                    sellers: $0.sellers.sorted(),
+                    latestValueUSD: $0.currencyCodes.count == 1 ? $0.latestValueUSD : 0,
+                    currencyCode: $0.currencyCodes.count == 1 ? $0.currencyCodes.first : nil
+                )
+            }
+            .sorted {
+                let lhsNet = abs($0.buyers.count - $0.sellers.count)
+                let rhsNet = abs($1.buyers.count - $1.sellers.count)
+                if lhsNet != rhsNet { return lhsNet > rhsNet }
+                if $0.holderCount != $1.holderCount { return $0.holderCount > $1.holderCount }
+                if $0.aggregateWeight != $1.aggregateWeight { return $0.aggregateWeight > $1.aggregateWeight }
+                return ($0.ticker ?? $0.issuer) < ($1.ticker ?? $1.issuer)
+            }
     }
 }

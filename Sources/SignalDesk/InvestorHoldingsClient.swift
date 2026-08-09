@@ -6,11 +6,37 @@ struct PortfolioRefreshContext {
     var history: [ReportedPortfolio]
 }
 
+enum InvestorHoldingsError: LocalizedError {
+    case holdingsUnavailable
+    case informationUnavailable
+    case insufficientFilings
+
+    var errorDescription: String? {
+        switch self {
+        case .holdingsUnavailable:
+            "该投资者暂无可核验的公开持仓披露"
+        case .informationUnavailable:
+            "未读取到可用的基金持仓报告"
+        case .insufficientFilings:
+            "公开持仓报告不足两期，暂时无法计算变化"
+        }
+    }
+}
+
 struct InvestorPortfolioService {
     func fetchBasePortfolio(
         for investor: InvestorPreset,
         cachedTickers: [String: String]
     ) async throws -> PortfolioRefreshContext {
+        if investor.holdingsKind == .chineseFund {
+            return try await ChinaFundHoldingsClient().fetchBasePortfolio(
+                for: investor,
+                cachedTickers: cachedTickers
+            )
+        }
+        guard investor.holdingsKind == .sec13F else {
+            throw InvestorHoldingsError.holdingsUnavailable
+        }
         let history = try await SEC13FClient().holdingsHistory(cik: investor.cik, limit: 20)
         guard var portfolio = PortfolioAnalytics.basePortfolio(
             investor: investor,
@@ -23,11 +49,19 @@ struct InvestorPortfolioService {
         let missingCUSIPs = portfolio.positions
             .filter { $0.putCall == nil && $0.ticker == nil }
             .map(\.cusip)
+            + portfolio.changes
+                .filter { $0.putCall == nil && $0.ticker == nil }
+                .map(\.cusip)
         if !missingCUSIPs.isEmpty,
            let mapped = try? await OpenFIGIClient().mapCUSIPs(missingCUSIPs) {
             for index in portfolio.positions.indices {
                 if let ticker = mapped[portfolio.positions[index].cusip] {
                     portfolio.positions[index].ticker = ticker
+                }
+            }
+            for index in portfolio.changes.indices {
+                if let ticker = mapped[portfolio.changes[index].cusip] {
+                    portfolio.changes[index].ticker = ticker
                 }
             }
         }
@@ -269,8 +303,11 @@ struct TwelveDataClient {
 
 @MainActor
 final class InvestorHoldingsStore: ObservableObject {
+    static let portfolioCacheValidity: TimeInterval = 30 * 24 * 60 * 60
+
     @Published private(set) var portfolios: [String: InvestorPortfolio] = [:]
     @Published private(set) var refreshingInvestorID: String?
+    @Published private(set) var isRefreshingAll = false
     @Published private(set) var completedMarketSymbols = 0
     @Published private(set) var totalMarketSymbols = 0
     @Published var statusMessage: String?
@@ -291,7 +328,21 @@ final class InvestorHoldingsStore: ObservableObject {
         portfolios[investorID]
     }
 
-    func refresh(_ investor: InvestorPreset) async {
+    static func isPortfolioCacheFresh(refreshedAt: Date, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(refreshedAt) < portfolioCacheValidity
+    }
+
+    func refreshIfStale(_ investor: InvestorPreset, now: Date = Date()) async {
+        guard let portfolio = portfolios[investor.id],
+              Self.isPortfolioCacheFresh(refreshedAt: portfolio.refreshedAt, now: now) else {
+            await refresh(investor)
+            return
+        }
+        statusInvestorID = investor.id
+        statusMessage = "已使用缓存持仓 · 更新于 \(portfolio.refreshedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    func refresh(_ investor: InvestorPreset, includeMarketData: Bool = true) async {
         guard refreshingInvestorID == nil else { return }
         refreshingInvestorID = investor.id
         completedMarketSymbols = 0
@@ -321,8 +372,13 @@ final class InvestorHoldingsStore: ObservableObject {
             portfolios[investor.id] = portfolio
             save()
 
-            guard let apiKey = KeychainStore.twelveDataAPIKey, !apiKey.isEmpty else {
-                statusMessage = "13F 已更新；在设置中添加免费 Twelve Data Key 后可计算成本与收益"
+            guard investor.holdingsKind == .sec13F,
+                  includeMarketData,
+                  let apiKey = KeychainStore.twelveDataAPIKey,
+                  !apiKey.isEmpty else {
+                statusMessage = investor.holdingsKind == .chineseFund
+                    ? "基金季报持仓已更新；仅公开前十大持仓，暂不计算个股行情收益"
+                    : "13F 已更新；在设置中添加免费 Twelve Data Key 后可计算成本与收益"
                 return
             }
 
@@ -365,6 +421,41 @@ final class InvestorHoldingsStore: ObservableObject {
         }
     }
 
+    func refreshAll(
+        _ investors: [InvestorPreset] = InvestorPreset.featured
+    ) async {
+        guard refreshingInvestorID == nil, !isRefreshingAll else { return }
+        isRefreshingAll = true
+        defer { isRefreshingAll = false }
+        statusInvestorID = nil
+        statusMessage = "正在刷新全部投资者的 SEC 13F…"
+
+        var refreshedCount = 0
+        for investor in investors {
+            await refresh(investor, includeMarketData: false)
+            if portfolios[investor.id] != nil {
+                refreshedCount += 1
+            }
+        }
+        statusInvestorID = nil
+        statusMessage = "已刷新 \(refreshedCount) 位投资者的 13F 持仓"
+    }
+
+    func refreshAllIfStale(
+        _ investors: [InvestorPreset] = InvestorPreset.featured,
+        now: Date = Date()
+    ) async {
+        let staleInvestors = investors.filter { investor in
+            guard let portfolio = portfolios[investor.id] else { return true }
+            return !Self.isPortfolioCacheFresh(refreshedAt: portfolio.refreshedAt, now: now)
+        }
+        guard !staleInvestors.isEmpty else {
+            statusMessage = "已使用全部持仓缓存 · 更新于最近 30 天内"
+            return
+        }
+        await refreshAll(staleInvestors)
+    }
+
     func loadChineseNames(for investorID: String) async {
         guard localizingInvestorIDs.insert(investorID).inserted,
               let portfolio = portfolios[investorID] else {
@@ -383,14 +474,21 @@ final class InvestorHoldingsStore: ObservableObject {
     }
 
     private func fetchChineseNames(for portfolio: InvestorPortfolio) async -> [String: String] {
-        let missingSymbols = portfolio.positions.compactMap { position -> String? in
+        let positionSymbols = portfolio.positions.compactMap { position -> String? in
             guard position.chineseName == nil,
                   position.putCall == nil else {
                 return nil
             }
             return position.ticker
         }
-        return (try? await chineseNameClient.names(for: missingSymbols)) ?? [:]
+        let changeSymbols = portfolio.changes.compactMap { change -> String? in
+            guard change.localizedName == nil,
+                  change.putCall == nil else {
+                return nil
+            }
+            return change.ticker
+        }
+        return (try? await chineseNameClient.names(for: Array(Set(positionSymbols + changeSymbols)).sorted())) ?? [:]
     }
 
     private func applyChineseNames(
@@ -403,6 +501,13 @@ final class InvestorHoldingsStore: ObservableObject {
                 continue
             }
             portfolio.positions[index].localizedName = name
+        }
+        for index in portfolio.changes.indices {
+            guard let ticker = portfolio.changes[index].ticker?.uppercased(),
+                  let name = names[ticker] else {
+                continue
+            }
+            portfolio.changes[index].localizedName = name
         }
     }
 
@@ -451,6 +556,13 @@ final class InvestorHoldingsStore: ObservableObject {
             merged.positions[index].costConfidence = prior.costConfidence
             merged.positions[index].returns = prior.returns
             merged.positions[index].marketDataAsOf = prior.marketDataAsOf
+        }
+        let cachedChangesByKey = Dictionary(uniqueKeysWithValues: cached.changes.map { ($0.securityKey, $0) })
+        for index in merged.changes.indices {
+            guard let prior = cachedChangesByKey[merged.changes[index].securityKey] else { continue }
+            merged.changes[index].ticker = merged.changes[index].ticker ?? prior.ticker
+            merged.changes[index].localizedName =
+                merged.changes[index].localizedName ?? prior.localizedName
         }
         return merged
     }

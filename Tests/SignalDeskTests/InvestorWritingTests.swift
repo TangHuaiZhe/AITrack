@@ -118,9 +118,19 @@ struct InvestorWritingTests {
             provider: .ollama,
             generatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
+        let translation = AITranslation(
+            content: "翻译：保持耐心。",
+            provider: .ollama,
+            generatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
 
         store.saveSummary(
             summary,
+            writingID: writing.id,
+            investorID: writing.investorID
+        )
+        store.saveTranslation(
+            translation,
             writingID: writing.id,
             investorID: writing.investorID
         )
@@ -129,6 +139,10 @@ struct InvestorWritingTests {
         #expect(
             reloaded.writing(id: writing.id, investorID: writing.investorID)?.aiSummary
                 == summary
+        )
+        #expect(
+            reloaded.writing(id: writing.id, investorID: writing.investorID)?.aiTranslation
+                == translation
         )
     }
 
