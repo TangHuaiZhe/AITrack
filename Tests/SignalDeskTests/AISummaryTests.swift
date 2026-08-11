@@ -11,6 +11,81 @@ struct AISummaryTests {
     }
 
     @Test
+    func mediaEventsAreNotEligibleForAISummary() {
+        let event = SignalEvent(
+            id: "podcast-event",
+            sourceID: UUID(),
+            sourceName: "Example Founder",
+            title: "Example Founder podcast interview",
+            summary: String(repeating: "This is only the episode description. ", count: 12),
+            url: "https://www.youtube.com/watch?v=example",
+            publishedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            category: .viewpoint,
+            importance: 90,
+            matchedTopics: ["AI"],
+            aiSummary: nil
+        )
+
+        #expect(!AISummaryService.canSummarize(event))
+        var mediaSearchEvent = event
+        mediaSearchEvent.sourceKind = .mediaSearch
+        #expect(!AISummaryService.canSummarize(mediaSearchEvent))
+        mediaSearchEvent.transcriptURL = "https://cdn.example.com/episode.vtt"
+        #expect(AISummaryService.canSummarize(mediaSearchEvent))
+        #expect(MediaClassifier.isMedia(title: "A technical webinar", url: "https://example.com/page"))
+        #expect(!MediaClassifier.isMedia(title: "A video game analysis", url: "https://example.com/article"))
+        #expect(MediaClassifier.isMedia(title: "A written analysis", url: "https://youtu.be/example"))
+    }
+
+    @Test
+    func shortFallbackTextIsNotUsableForSummary() async {
+        let event = SignalEvent(
+            id: "short-event",
+            sourceID: UUID(),
+            sourceName: "Example",
+            title: "Short update",
+            summary: "Only a short description.",
+            url: nil,
+            publishedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            category: .activity,
+            importance: 80,
+            matchedTopics: ["AI"],
+            aiSummary: nil
+        )
+
+        do {
+            _ = try await AISummaryService().summarize(event)
+            Issue.record("Expected short fallback text to be rejected before calling an AI provider")
+        } catch let error as AISummaryError {
+            #expect(error.localizedDescription == "没有抓到足够的正文、字幕或文字稿")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func extractsTextFromWebVTTTranscript() {
+        let vtt = """
+        WEBVTT
+
+        00:00.000 --> 00:02.000
+        <v Host>Hello &amp; welcome.</v>
+
+        00:02.000 --> 00:04.000
+        This is the first point.
+        This is the first point.
+
+        NOTE
+        This note is not part of the transcript.
+        """
+
+        let text = ArticleContentFetcher.extractTranscriptText(from: vtt)
+
+        #expect(text == "Host: Hello & welcome.\nThis is the first point.")
+        #expect(!text.contains("This note is not part of the transcript."))
+    }
+
+    @Test
     func promptsRequireDetailedCoverageOfMaterial() {
         let event = SignalEvent(
             id: "prompt-event",

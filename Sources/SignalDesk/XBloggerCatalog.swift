@@ -29,13 +29,16 @@ struct XBloggerPreset: Identifiable, Hashable {
     var note: String? = nil
 
     func trackedSource(isEnabled: Bool) -> TrackedSource {
-        .x(
+        var source = TrackedSource.x(
             name: name,
             role: "\(category.title) · \(role)",
             username: username,
             topics: topics,
             isEnabled: isEnabled
         )
+        source.groupID = id
+        source.groupName = name
+        return source
     }
 }
 

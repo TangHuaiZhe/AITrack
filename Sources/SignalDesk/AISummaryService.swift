@@ -8,6 +8,7 @@ import FoundationModels
 
 enum AISummaryError: LocalizedError {
     case noUsableContent
+    case mediaNotSupported
     case localModelRequiresMacOS26
     case localModelUnavailable(String)
     case ollamaUnavailable(String)
@@ -19,7 +20,9 @@ enum AISummaryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noUsableContent:
-            "没有可供总结的正文或简介"
+            "没有抓到足够的正文、字幕或文字稿"
+        case .mediaNotSupported:
+            "播客或视频暂不支持 AI 总结，请先提供完整字幕或文字稿"
         case .localModelRequiresMacOS26:
             "Apple 本机模型需要 macOS 26 或更高版本"
         case .localModelUnavailable(let reason):
@@ -50,9 +53,25 @@ struct AISummaryService {
         ) ?? .localFirst
     }
 
+    static func canSummarize(_ event: SignalEvent) -> Bool {
+        let isMedia = event.sourceKind == .mediaSearch ||
+            MediaClassifier.isMedia(title: event.title, url: event.url)
+        guard isMedia else { return true }
+        guard let transcriptURL = event.transcriptURL,
+              let url = URL(string: transcriptURL),
+              url.scheme != nil,
+              url.host != nil else {
+            return false
+        }
+        return true
+    }
+
     func summarize(_ event: SignalEvent) async throws -> AISummary {
+        guard Self.canSummarize(event) else { throw AISummaryError.mediaNotSupported }
         let articleText = await ArticleContentFetcher().content(for: event)
-        guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
+        guard articleText.count >= ArticleContentFetcher.minimumUsableTextLength else {
+            throw AISummaryError.noUsableContent
+        }
         return try await summarizePrompt(
             Self.prompt(
                 event: event,
@@ -67,7 +86,9 @@ struct AISummaryService {
             summary: writing.sourceNote,
             rawURL: writing.sourceURL
         )
-        guard !articleText.isEmpty else { throw AISummaryError.noUsableContent }
+        guard articleText.count >= ArticleContentFetcher.minimumUsableTextLength else {
+            throw AISummaryError.noUsableContent
+        }
         return try await summarizePrompt(
             Self.writingPrompt(
                 writing: writing,
@@ -353,8 +374,19 @@ struct AISummaryService {
 }
 
 struct ArticleContentFetcher {
+    static let minimumUsableTextLength = 240
+
     func content(for event: SignalEvent) async -> String {
-        await content(title: event.title, summary: event.summary, rawURL: event.url)
+        let isMedia = event.sourceKind == .mediaSearch ||
+            MediaClassifier.isMedia(title: event.title, url: event.url)
+        if let transcriptURL = event.transcriptURL,
+           let url = URL(string: transcriptURL),
+           let transcript = await transcript(from: url),
+           transcript.count >= Self.minimumUsableTextLength {
+            return String(transcript.prefix(40_000))
+        }
+        if isMedia { return "" }
+        return await content(title: event.title, summary: event.summary, rawURL: event.url)
     }
 
     func content(title: String, summary: String, rawURL: String?) async -> String {
@@ -393,7 +425,7 @@ struct ArticleContentFetcher {
             }
             guard let html = Self.decode(data: data, response: http) else { return fallback }
             let extracted = Self.extractReadableText(from: html)
-            guard extracted.count >= 240 else { return fallback }
+            guard extracted.count >= Self.minimumUsableTextLength else { return fallback }
             return String(extracted.prefix(40_000))
         } catch {
             return fallback
@@ -429,6 +461,72 @@ struct ArticleContentFetcher {
             .compactMap { document.page(at: $0)?.string }
             .joined(separator: "\n\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func extractTranscriptText(from source: String) -> String {
+        let timestampPattern = #"^\s*(?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}\s+-->"#
+        let cueIndexPattern = #"^\s*\d+\s*$"#
+        var isNote = false
+        var lines: [String] = []
+
+        for rawLine in source.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty {
+                isNote = false
+                continue
+            }
+            if line == "WEBVTT" || line == "STYLE" || line == "REGION" {
+                continue
+            }
+            if line.hasPrefix("NOTE") {
+                isNote = true
+                continue
+            }
+            if isNote || line.range(of: timestampPattern, options: .regularExpression) != nil {
+                continue
+            }
+            if line.range(of: cueIndexPattern, options: .regularExpression) != nil {
+                continue
+            }
+
+            let withSpeaker = replacing(pattern: #"<v\s+([^>]+)>"#, in: line, with: "$1: ")
+            let stripped = replacing(pattern: #"<[^>]+>"#, in: withSpeaker, with: " ")
+            let cleaned = decodeEntities(stripped)
+            let normalized = cleaned.replacingOccurrences(
+                of: #"\s+"#, with: " ", options: .regularExpression
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else { continue }
+            if lines.last != normalized {
+                lines.append(normalized)
+            }
+        }
+
+        return lines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func transcript(from url: URL) async -> String? {
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            request.setValue(
+                "SignalDesk/0.1 contact=local-user@signalsdesk.app",
+                forHTTPHeaderField: "User-Agent"
+            )
+            request.setValue(
+                "text/vtt, application/x-subrip, text/plain, text/*",
+                forHTTPHeaderField: "Accept"
+            )
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let raw = Self.decode(data: data, response: http) else {
+                return nil
+            }
+            return Self.extractTranscriptText(from: raw)
+        } catch {
+            return nil
+        }
     }
 
     private static func decode(data: Data, response: HTTPURLResponse) -> String? {

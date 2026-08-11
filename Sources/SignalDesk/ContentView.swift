@@ -11,7 +11,7 @@ struct ContentView: View {
     @State private var category: SignalCategory?
     @State private var selectedTopic: SignalDomain?
     @State private var selectedSourceGroupKey: String?
-    @State private var expandedSourceSections: Set<AppSection> = [.inbox, .xFeed, .rssFeed]
+    @State private var expandedSourceSections: Set<AppSection> = [.inbox, .xFeed, .rssFeed, .chinaEconomy]
     @State private var selectedDailyBriefID: String?
     @State private var selectedInvestorID = InvestorPreset.featured.first?.id
     @State private var selectedInvestorTab = InvestorPageTab.investors
@@ -140,7 +140,7 @@ struct ContentView: View {
                                     Circle()
                                         .fill(group.sources.contains(where: { $0.isEnabled }) ? Color.blue : Color.secondary)
                                         .frame(width: 6, height: 6)
-                                    Text(group.key)
+                                    Text(group.title)
                                         .lineLimit(1)
                                     Spacer()
                                     let unread = unreadCount(for: group)
@@ -329,6 +329,9 @@ struct ContentView: View {
             case .rssFeed:
                 sectionMatches = rssSourceIDs.contains(event.sourceID) &&
                     (selectedSourceGroupKey == nil || selectedSourceGroupKey == sourceGroupKey(for: event.sourceID))
+            case .chinaEconomy:
+                sectionMatches = chinaEconomySourceIDs.contains(event.sourceID) &&
+                    (selectedSourceGroupKey == nil || selectedSourceGroupKey == sourceGroupKey(for: event.sourceID))
             case .highValue: sectionMatches = event.importance >= 75
             case .bookmarks: sectionMatches = event.isBookmarked
             default: sectionMatches = true
@@ -349,6 +352,8 @@ struct ContentView: View {
             activeSourceCount = store.sources.filter { $0.sourceKind == .x && $0.isEnabled }.count
         case .rssFeed:
             activeSourceCount = store.sources.filter { $0.sourceKind == .rss && $0.isEnabled }.count
+        case .chinaEconomy:
+            activeSourceCount = store.sources.filter { $0.channel == .chinaEconomy && $0.isEnabled }.count
         default:
             activeSourceCount = store.sources.filter(\.isEnabled).count
         }
@@ -366,28 +371,38 @@ struct ContentView: View {
         Set(store.sources.filter { $0.sourceKind == .rss }.map(\.id))
     }
 
+    private var chinaEconomySourceIDs: Set<UUID> {
+        Set(store.sources.filter { $0.channel == .chinaEconomy }.map(\.id))
+    }
+
     private var selectedSourceName: String? {
-        selectedSourceGroupKey
+        guard let selectedSourceGroupKey else { return nil }
+        return sourceGroups(for: section ?? .inbox)
+            .first(where: { $0.key == selectedSourceGroupKey })?.title
+            ?? selectedSourceGroupKey
     }
 
     private func isSourceSection(_ section: AppSection) -> Bool {
-        section == .inbox || section == .xFeed || section == .rssFeed
+        section == .inbox || section == .xFeed || section == .rssFeed || section == .chinaEconomy
     }
 
     private func sourceGroups(for section: AppSection) -> [SourceGroup] {
         let kind: SourceKind?
+        let channel: SourceChannel?
         switch section {
-        case .inbox: kind = nil
-        case .xFeed: kind = .x
-        case .rssFeed: kind = .rss
-        default: kind = nil
+        case .inbox: kind = nil; channel = nil
+        case .xFeed: kind = .x; channel = nil
+        case .rssFeed: kind = .rss; channel = nil
+        case .chinaEconomy: kind = nil; channel = .chinaEconomy
+        default: kind = nil; channel = nil
         }
         let filteredSources = store.sources
-            .filter { kind == nil || $0.sourceKind == kind }
-        let grouped = Dictionary(grouping: filteredSources, by: sourceGroupKey)
+            .filter { (kind == nil || $0.sourceKind == kind) && (channel == nil || $0.channel == channel) }
+        let grouped = Dictionary(grouping: filteredSources, by: \.groupKey)
         return grouped.map { key, sources in
             SourceGroup(
                 key: key,
+                title: sources.first?.groupTitle ?? key,
                 sources: sources.sorted {
                     $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 }
@@ -424,16 +439,8 @@ struct ContentView: View {
         }.count
     }
 
-    private func sourceGroupKey(_ source: TrackedSource) -> String {
-        sourceGroupKey(for: source.name)
-    }
-
     private func sourceGroupKey(for sourceID: UUID) -> String? {
-        store.sources.first { $0.id == sourceID }.map(sourceGroupKey)
-    }
-
-    private func sourceGroupKey(for name: String) -> String {
-        name.components(separatedBy: " · ").first ?? name
+        store.sources.first { $0.id == sourceID }?.groupKey
     }
 
     @ViewBuilder
@@ -476,6 +483,8 @@ struct ContentView: View {
             store.events.filter { xSourceIDs.contains($0.sourceID) && !$0.isRead }.count
         case .rssFeed:
             store.events.filter { rssSourceIDs.contains($0.sourceID) && !$0.isRead }.count
+        case .chinaEconomy:
+            store.events.filter { chinaEconomySourceIDs.contains($0.sourceID) && !$0.isRead }.count
         case .highValue: store.highValueCount
         case .bookmarks: store.events.filter(\.isBookmarked).count
         case .dailyBrief: nil
@@ -525,6 +534,7 @@ struct ContentView: View {
 
 private struct SourceGroup: Identifiable {
     let key: String
+    let title: String
     let sources: [TrackedSource]
 
     var id: String { key }
@@ -734,10 +744,15 @@ private struct EventDetail: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("AI 情报总结（详细版）", systemImage: "sparkles")
+                        Label(
+                            AISummaryService.canSummarize(event)
+                                ? "AI 情报总结（详细版）"
+                                : "AI 情报总结（暂不支持媒体内容）",
+                            systemImage: "sparkles"
+                        )
                             .scaledFont(.headline)
                         Spacer()
-                        if let summary = event.aiSummary {
+                        if AISummaryService.canSummarize(event), let summary = event.aiSummary {
                             Text(summary.provider.title)
                                 .scaledFont(.caption)
                                 .foregroundStyle(.secondary)
@@ -750,7 +765,23 @@ private struct EventDetail: View {
                         }
                     }
 
-                    if let summary = event.aiSummary {
+                    if !AISummaryService.canSummarize(event) {
+                        Label(
+                            "当前只能总结抓取到正文的文章；播客和视频需要完整字幕或文字稿。",
+                            systemImage: "info.circle"
+                        )
+                        .scaledFont(.subheadline)
+                        .foregroundStyle(.secondary)
+                        if let summary = event.aiSummary {
+                            Text("已保存的历史总结")
+                                .scaledFont(.caption)
+                                .foregroundStyle(.secondary)
+                            MarkdownText(summary.content)
+                                .scaledFont(.body)
+                                .lineSpacing(6)
+                                .textSelection(.enabled)
+                        }
+                    } else if let summary = event.aiSummary {
                         if !summary.isDetailedFormat {
                             Label("这是旧版简摘要，点击上方按钮可按完整材料重新生成。", systemImage: "info.circle")
                                 .scaledFont(.caption)
@@ -807,6 +838,7 @@ private struct EventDetail: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .task(id: event.id) {
             guard event.importance >= AISummaryService.automaticSummaryImportanceThreshold,
+                  AISummaryService.canSummarize(event),
                   event.aiSummary == nil else {
                 return
             }
@@ -817,6 +849,10 @@ private struct EventDetail: View {
     @MainActor
     private func generateSummary() async {
         guard !isSummarizing else { return }
+        guard AISummaryService.canSummarize(event) else {
+            summaryError = AISummaryError.mediaNotSupported.localizedDescription
+            return
+        }
         isSummarizing = true
         summaryError = nil
         defer { isSummarizing = false }

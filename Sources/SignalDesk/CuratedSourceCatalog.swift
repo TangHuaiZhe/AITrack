@@ -6,15 +6,20 @@ struct CuratedSourcePreset: Identifiable, Hashable {
     var role: String
     var topics: [String]
     var feedURL: String
+    var channel: SourceChannel? = nil
 
     func trackedSource() -> TrackedSource {
-        TrackedSource(
+        var source = TrackedSource(
             name: name,
             role: role,
             topics: topics,
             sourceKind: .rss,
             feedURL: feedURL
         )
+        source.groupID = id
+        source.groupName = name
+        source.channel = channel
+        return source
     }
 }
 
@@ -82,6 +87,57 @@ extension CuratedSourcePreset {
             role: "AI 技术与商业模式专题；关注 Agent、评测、数据、AI 定价与企业部署",
             topics: ["AI", "agent", "evaluation", "data", "pricing", "enterprise deployment", "AI infrastructure", "Agent", "评测", "企业部署"],
             feedURL: "https://feeds.simplecast.com/Hb_IuXOo"
+        )
+    ]
+
+    static let chinaEconomySources: [CuratedSourcePreset] = [
+        CuratedSourcePreset(
+            id: "china-economy-goldman-sachs",
+            name: "Goldman Sachs Research · China",
+            role: "高盛研究部对中国宏观、消费、地产、出口与产业转型的研究；聚合入口，原文回到高盛",
+            topics: ["China", "Chinese economy", "GDP", "growth", "consumption", "property", "exports", "manufacturing", "中国经济", "增长", "消费", "房地产", "出口", "制造业"],
+            feedURL: googleNewsFeed(query: "site:goldmansachs.com/insights China economy"),
+            channel: .chinaEconomy
+        ),
+        CuratedSourcePreset(
+            id: "china-economy-bbc",
+            name: "BBC News · China Economy",
+            role: "BBC 对中国经济、贸易、产业与企业变化的报道；聚合入口，原文回到 BBC",
+            topics: ["China", "economy", "economic", "GDP", "trade", "business", "property", "exports", "中国经济", "经济", "贸易", "企业"],
+            feedURL: googleNewsFeed(query: "site:bbc.com/news China economy OR economic OR business OR trade"),
+            channel: .chinaEconomy
+        ),
+        CuratedSourcePreset(
+            id: "china-economy-financial-times",
+            name: "Financial Times · China",
+            role: "金融时报对中国宏观、市场、产业链和企业的深度报道；聚合入口，原文回到 FT",
+            topics: ["China", "economy", "markets", "business", "property", "trade", "manufacturing", "中国经济", "市场", "商业", "房地产", "贸易", "制造业"],
+            feedURL: googleNewsFeed(query: "site:ft.com China economy OR markets OR business"),
+            channel: .chinaEconomy
+        ),
+        CuratedSourcePreset(
+            id: "china-economy-economist",
+            name: "The Economist · China",
+            role: "《经济学人》对中国宏观、产业、消费与企业的分析；聚合入口，原文回到 Economist",
+            topics: ["China", "economy", "industry", "consumption", "property", "technology", "中国经济", "产业", "消费", "房地产", "科技"],
+            feedURL: googleNewsFeed(query: "site:economist.com China economy OR business OR industry"),
+            channel: .chinaEconomy
+        ),
+        CuratedSourcePreset(
+            id: "china-economy-imf",
+            name: "IMF · China / Asia",
+            role: "国际货币基金组织对中国与亚洲增长、政策、贸易和金融稳定的研究；聚合入口，原文回到 IMF",
+            topics: ["China", "economy", "GDP", "growth", "policy", "trade", "financial stability", "中国经济", "增长", "政策", "贸易", "金融稳定"],
+            feedURL: googleNewsFeed(query: "site:imf.org China economy"),
+            channel: .chinaEconomy
+        ),
+        CuratedSourcePreset(
+            id: "china-economy-world-bank",
+            name: "World Bank · China",
+            role: "世界银行对中国增长、就业、消费、生产率和结构改革的研究；聚合入口，原文回到 World Bank",
+            topics: ["China", "economy", "growth", "employment", "consumption", "productivity", "reform", "中国经济", "增长", "就业", "消费", "生产率", "改革"],
+            feedURL: googleNewsFeed(query: "site:worldbank.org China economy"),
+            channel: .chinaEconomy
         )
     ]
 

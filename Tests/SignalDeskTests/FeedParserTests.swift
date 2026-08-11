@@ -37,6 +37,23 @@ struct FeedParserTests {
         #expect(items[0].link == "https://example.com/filing")
     }
 
+    @Test func parsesPodcastTranscriptURL() throws {
+        let xml = """
+        <rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel><item>
+        <title>AI podcast</title>
+        <description>Episode description</description>
+        <link>https://example.com/episode</link>
+        <podcast:transcript url="https://cdn.example.com/episode.vtt" type="text/vtt" language="en" />
+        <pubDate>Sun, 27 Jul 2026 10:00:00 +0800</pubDate>
+        </item></channel></rss>
+        """
+
+        let items = try FeedParser.parse(data: Data(xml.utf8))
+
+        #expect(items.count == 1)
+        #expect(items[0].transcriptURL == "https://cdn.example.com/episode.vtt")
+    }
+
     @Test func scoringRewardsTopicsAndHoldings() {
         let regular = ImportanceScorer.score(
             text: "New product update",

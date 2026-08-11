@@ -15,6 +15,12 @@ struct XBloggerCatalogTests {
         #expect(AppSection.rssFeed.icon == "dot.radiowaves.left.and.right")
     }
 
+    @Test func exposesDedicatedChinaEconomySection() {
+        #expect(AppSection.allCases.contains(.chinaEconomy))
+        #expect(AppSection.chinaEconomy.title == "海外看中国")
+        #expect(AppSection.chinaEconomy.icon == "globe.asia.australia.fill")
+    }
+
     @Test func catalogHasUniqueAccountsAndBalancedRecommendations() {
         let bloggers = XBloggerPreset.catalog
         let usernames = Set(bloggers.map { $0.username.lowercased() })

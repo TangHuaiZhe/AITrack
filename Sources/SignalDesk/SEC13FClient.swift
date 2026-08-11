@@ -254,6 +254,7 @@ struct SEC13FClient {
             SignalEvent(
                 id: "\(source.id.uuidString)|13f|\(filing.accession)",
                 sourceID: source.id,
+                sourceKind: .sec13F,
                 sourceName: source.name,
                 title: "13F 持仓变化 · \(filing.reportDate)",
                 summary: summary,
@@ -269,6 +270,7 @@ struct SEC13FClient {
             SignalEvent(
                 id: "\(source.id.uuidString)|13f|\(filing.accession)|\(change.holding.key)",
                 sourceID: source.id,
+                sourceKind: .sec13F,
                 sourceName: source.name,
                 title: "\(change.kind.title) · \(change.holding.issuer)",
                 summary: changeSummary(change),

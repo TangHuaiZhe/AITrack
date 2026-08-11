@@ -23,11 +23,45 @@ struct CuratedSourceCatalogTests {
         #expect(feedURLs.contains("https://feeds.simplecast.com/Hb_IuXOo"))
     }
 
+    @Test func containsDedicatedChinaEconomySources() {
+        let sources = CuratedSourcePreset.chinaEconomySources.map { $0.trackedSource() }
+        let keys = Set(sources.map { "\($0.sourceKind.rawValue)|\($0.feedURL)" })
+
+        #expect(sources.count == 6)
+        #expect(keys.count == sources.count)
+        #expect(sources.allSatisfy { $0.channel == .chinaEconomy })
+        #expect(sources.contains { $0.name.contains("Goldman Sachs") })
+        #expect(sources.contains { $0.name.contains("BBC") })
+        #expect(sources.contains { $0.name.contains("IMF") })
+        #expect(sources.allSatisfy { $0.feedURL.contains("news.google.com/rss/search") })
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TRACKAI_LIVE_CURATED_TEST"] == "1"))
     func fetchesLiveCuratedFeeds() async {
         var failures: [String] = []
         await withTaskGroup(of: (String, String?).self) { group in
             for preset in CuratedSourcePreset.researchSources {
+                group.addTask {
+                    do {
+                        let events = try await FeedClient().fetch(preset.trackedSource())
+                        return (preset.name, events.isEmpty ? "返回 0 条" : nil)
+                    } catch {
+                        return (preset.name, error.localizedDescription)
+                    }
+                }
+            }
+            for await (name, failure) in group where failure != nil {
+                failures.append("\(name)：\(failure!)")
+            }
+        }
+        #expect(failures.isEmpty, "真实来源失败：\(failures.joined(separator: "；"))")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["TRACKAI_LIVE_CHINA_ECONOMY_TEST"] == "1"))
+    func fetchesLiveChinaEconomyFeeds() async {
+        var failures: [String] = []
+        await withTaskGroup(of: (String, String?).self) { group in
+            for preset in CuratedSourcePreset.chinaEconomySources {
                 group.addTask {
                     do {
                         let events = try await FeedClient().fetch(preset.trackedSource())

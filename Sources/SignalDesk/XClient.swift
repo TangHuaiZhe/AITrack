@@ -381,6 +381,7 @@ struct XClient {
         return SignalEvent(
             id: "\(source.id.uuidString)|x|\(id)",
             sourceID: source.id,
+            sourceKind: .x,
             sourceName: source.name,
             title: text.replacingOccurrences(of: "\n", with: " ").prefixText(120),
             summary: engagementSummary(metrics, providerName: providerName),

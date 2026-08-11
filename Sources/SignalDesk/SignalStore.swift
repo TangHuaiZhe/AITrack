@@ -12,22 +12,25 @@ final class SignalStore: ObservableObject {
     @Published var isRefreshing = false
     @Published var statusMessage: String?
 
-    private let client = FeedClient()
-    private let stateURL: URL
+    private let refreshCoordinator: RefreshCoordinator
+    private let persistence: SignalStatePersistence
     private var installedCatalogIDs = Set<String>()
     private static let requestedPeopleCatalogID = "ai-robotics-longform-v4"
     private static let feiFeiA16ZCatalogID = "fei-fei-li-a16z-v1"
     private static let rayDalioCatalogID = "ray-dalio-v1"
     private static let domainTaxonomyID = "signal-domains-v3"
     private static let researchSourcesCatalogID = "research-sources-v1"
+    private static let chinaEconomySourcesCatalogID = "china-economy-sources-v1"
 
-    init(stateURL: URL? = nil) {
-        self.stateURL = stateURL ?? Self.defaultStateURL
+    init(stateURL: URL? = nil, refreshCoordinator: RefreshCoordinator = RefreshCoordinator()) {
+        self.refreshCoordinator = refreshCoordinator
+        self.persistence = SignalStatePersistence(url: stateURL)
         load()
         installRequestedPeopleIfNeeded()
         installFeiFeiA16ZIfNeeded()
         installRayDalioIfNeeded()
         installResearchSourcesIfNeeded()
+        installChinaEconomySourcesIfNeeded()
         installDomainTaxonomyIfNeeded()
     }
 
@@ -206,76 +209,33 @@ final class SignalStore: ObservableObject {
         statusMessage = nil
         defer { isRefreshing = false }
 
-        var added: [SignalEvent] = []
-        var committedAddedIDs = Set<String>()
-        var failures: [String] = []
-        let enabledSources = sources.filter(\.isEnabled)
-        let batchesBrightDataX = XProvider.selected == .brightData
-        let brightDataXSources = batchesBrightDataX
-            ? enabledSources.filter { $0.sourceKind == .x }
-            : []
-
-        if !brightDataXSources.isEmpty {
-            do {
-                let incomingBySource = try await client.fetchX(brightDataXSources)
-                let existingIDs = Set(events.map(\.id))
-                for source in brightDataXSources {
-                    let incoming = incomingBySource[source.id] ?? []
-                    added.append(contentsOf: incoming.filter { !existingIDs.contains($0.id) })
-                    if let index = sources.firstIndex(where: { $0.id == source.id }) {
-                        sources[index].lastCheckedAt = Date()
-                    }
-                }
-                let xAdded = added
-                if !xAdded.isEmpty {
-                    events.append(contentsOf: xAdded)
-                    committedAddedIDs.formUnion(xAdded.map(\.id))
-                    events = trimEvents(events)
-                    save()
-                }
-            } catch {
-                failures.append(contentsOf: brightDataXSources.map {
-                    "\($0.name)：\(error.localizedDescription)"
-                })
-            }
+        let result = await refreshCoordinator.refresh(
+            sources: sources,
+            existingEvents: events,
+            provider: XProvider.selected
+        )
+        for (sourceID, checkedAt) in result.checkedAtBySourceID {
+            guard let index = sources.firstIndex(where: { $0.id == sourceID }) else { continue }
+            sources[index].lastCheckedAt = checkedAt
         }
 
-        for source in enabledSources where !(batchesBrightDataX && source.sourceKind == .x) {
-            if source.sourceKind == .mediaSearch,
-               let lastCheckedAt = source.lastCheckedAt,
-               Date().timeIntervalSince(lastCheckedAt) < 6 * 60 * 60 {
-                continue
-            }
-            do {
-                let incoming = try await client.fetch(source)
-                let existingIDs = Set(events.map(\.id))
-                added.append(contentsOf: incoming.filter { !existingIDs.contains($0.id) })
-                if let index = sources.firstIndex(where: { $0.id == source.id }) {
-                    sources[index].lastCheckedAt = Date()
-                }
-            } catch {
-                failures.append("\(source.name)：\(error.localizedDescription)")
-            }
-        }
-
-        events.append(contentsOf: added.filter { !committedAddedIDs.contains($0.id) })
+        events.append(contentsOf: result.addedEvents)
         events = trimEvents(events)
-        lastRefreshAt = Date()
+        lastRefreshAt = result.refreshedAt
 
-        if failures.isEmpty {
-            statusMessage = added.isEmpty ? "已是最新" : "新增 \(added.count) 条信号"
+        if result.failures.isEmpty {
+            statusMessage = result.addedEvents.isEmpty ? "已是最新" : "新增 \(result.addedEvents.count) 条信号"
         } else {
-            let firstFailure = failures.first.map { "；\($0)" } ?? ""
-            statusMessage = "新增 \(added.count) 条；\(failures.count) 个来源失败\(firstFailure)"
+            let firstFailure = result.failures.first.map { "；\($0)" } ?? ""
+            statusMessage = "新增 \(result.addedEvents.count) 条；\(result.failures.count) 个来源失败\(firstFailure)"
         }
         save()
-        await notify(for: added.filter { $0.importance >= 80 })
+        await notify(for: result.addedEvents.filter { $0.importance >= 80 })
     }
 
     private func load() {
         do {
-            let data = try Data(contentsOf: stateURL)
-            let snapshot = try JSONDecoder.signalDesk.decode(AppSnapshot.self, from: data)
+            let snapshot = try persistence.load()
             sources = snapshot.sources
             events = trimEvents(snapshot.events)
             lastRefreshAt = snapshot.lastRefreshAt
@@ -295,10 +255,6 @@ final class SignalStore: ObservableObject {
 
     private func save() {
         do {
-            try FileManager.default.createDirectory(
-                at: stateURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
             let snapshot = AppSnapshot(
                 sources: sources,
                 events: events,
@@ -307,8 +263,7 @@ final class SignalStore: ObservableObject {
                 dailyBrief: dailyBrief,
                 dailyBriefs: dailyBriefs
             )
-            let data = try JSONEncoder.signalDesk.encode(snapshot)
-            try data.write(to: stateURL, options: .atomic)
+            try persistence.save(snapshot)
         } catch {
             statusMessage = "保存失败：\(error.localizedDescription)"
         }
@@ -329,18 +284,13 @@ final class SignalStore: ObservableObject {
         try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
-    private static var defaultStateURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "SignalDesk", directoryHint: .isDirectory)
-            .appending(path: "state.json")
-    }
-
     private static func welcomeEvents(for sources: [TrackedSource]) -> [SignalEvent] {
         guard let first = sources.first else { return [] }
         return [
             SignalEvent(
                 id: "welcome",
                 sourceID: first.id,
+                sourceKind: first.sourceKind,
                 sourceName: "SignalDesk",
                 title: "你的高价值人物情报台已就绪",
                 summary: "点击右上角刷新可拉取官方 RSS。添加 SEC 13F 来源时只需填写机构 CIK；所有数据默认保存在本机。",
@@ -465,21 +415,20 @@ final class SignalStore: ObservableObject {
         }
         save()
     }
-}
 
-private extension JSONEncoder {
-    static var signalDesk: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }
-}
+    private func installChinaEconomySourcesIfNeeded() {
+        guard installedCatalogIDs.insert(Self.chinaEconomySourcesCatalogID).inserted else { return }
 
-private extension JSONDecoder {
-    static var signalDesk: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
+        var keys = Set(sources.map(Self.sourceKey))
+        var added = 0
+        for source in CuratedSourcePreset.chinaEconomySources.map({ $0.trackedSource() }) {
+            guard keys.insert(Self.sourceKey(source)).inserted else { continue }
+            sources.append(source)
+            added += 1
+        }
+        if added > 0 {
+            statusMessage = "已新增 \(added) 个海外看中国来源"
+        }
+        save()
     }
 }

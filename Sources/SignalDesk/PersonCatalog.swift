@@ -35,7 +35,12 @@ struct PersonPreset: Identifiable, Hashable {
                 requiredTitleTerms: feed.requiredTitleTerms
             )
         }
-        return result
+        return result.map { source in
+            var source = source
+            source.groupID = id
+            source.groupName = name
+            return source
+        }
     }
 
     static var legacyXUsernames: Set<String> {

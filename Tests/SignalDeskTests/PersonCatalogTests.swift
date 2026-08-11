@@ -26,6 +26,15 @@ struct PersonCatalogTests {
         #expect(sources.filter { $0.sourceKind == .rss }.allSatisfy { $0.isEnabled })
     }
 
+    @Test func assignsStableGroupIdentityToPresetSources() {
+        let person = PersonPreset.aiRoboticsLeaders.first { $0.id == "fei-fei-li" }!
+        let sources = person.trackedSources()
+
+        #expect(!sources.isEmpty)
+        #expect(sources.allSatisfy { $0.groupID == person.id })
+        #expect(sources.allSatisfy { $0.groupTitle == person.name })
+    }
+
     @Test func tracksRayDalioLongFormAndOfficialVideo() throws {
         let rayDalio = try #require(
             PersonPreset.aiRoboticsLeaders.first { $0.id == "ray-dalio" }

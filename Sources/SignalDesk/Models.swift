@@ -71,6 +71,12 @@ enum SignalDomain: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum SourceChannel: String, Codable, CaseIterable, Identifiable {
+    case chinaEconomy
+
+    var id: String { rawValue }
+}
+
 struct TrackedSource: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -81,6 +87,17 @@ struct TrackedSource: Identifiable, Codable, Hashable {
     var requiredTitleTerms: [String]? = nil
     var isEnabled = true
     var lastCheckedAt: Date?
+    var groupID: String? = nil
+    var groupName: String? = nil
+    var channel: SourceChannel? = nil
+
+    var groupKey: String {
+        groupID ?? groupName ?? name.components(separatedBy: " · ").first ?? name
+    }
+
+    var groupTitle: String {
+        groupName ?? name.components(separatedBy: " · ").first ?? name
+    }
 
     var initials: String {
         let words = name.split(separator: " ")
@@ -94,10 +111,12 @@ struct TrackedSource: Identifiable, Codable, Hashable {
 struct SignalEvent: Identifiable, Codable, Hashable {
     var id: String
     var sourceID: UUID
+    var sourceKind: SourceKind? = nil
     var sourceName: String
     var title: String
     var summary: String
     var url: String?
+    var transcriptURL: String? = nil
     var publishedAt: Date
     var category: SignalCategory
     var importance: Int
@@ -162,18 +181,52 @@ enum AISummaryMode: String, CaseIterable, Identifiable {
 }
 
 struct AppSnapshot: Codable {
+    static let currentSchemaVersion = 1
+
+    var schemaVersion: Int
     var sources: [TrackedSource]
     var events: [SignalEvent]
     var lastRefreshAt: Date?
     var installedCatalogIDs: [String]? = nil
     var dailyBrief: DailyBrief? = nil
     var dailyBriefs: [DailyBrief]? = nil
+
+    init(
+        schemaVersion: Int = AppSnapshot.currentSchemaVersion,
+        sources: [TrackedSource],
+        events: [SignalEvent],
+        lastRefreshAt: Date?,
+        installedCatalogIDs: [String]? = nil,
+        dailyBrief: DailyBrief? = nil,
+        dailyBriefs: [DailyBrief]? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.sources = sources
+        self.events = events
+        self.lastRefreshAt = lastRefreshAt
+        self.installedCatalogIDs = installedCatalogIDs
+        self.dailyBrief = dailyBrief
+        self.dailyBriefs = dailyBriefs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
+            ?? AppSnapshot.currentSchemaVersion
+        sources = try container.decode([TrackedSource].self, forKey: .sources)
+        events = try container.decode([SignalEvent].self, forKey: .events)
+        lastRefreshAt = try container.decodeIfPresent(Date.self, forKey: .lastRefreshAt)
+        installedCatalogIDs = try container.decodeIfPresent([String].self, forKey: .installedCatalogIDs)
+        dailyBrief = try container.decodeIfPresent(DailyBrief.self, forKey: .dailyBrief)
+        dailyBriefs = try container.decodeIfPresent([DailyBrief].self, forKey: .dailyBriefs)
+    }
 }
 
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
     case inbox
     case xFeed
     case rssFeed
+    case chinaEconomy
     case highValue
     case bookmarks
     case dailyBrief
@@ -188,6 +241,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .inbox: "情报流"
         case .xFeed: "X 情报"
         case .rssFeed: "RSS"
+        case .chinaEconomy: "海外看中国"
         case .highValue: "高价值"
         case .bookmarks: "已收藏"
         case .dailyBrief: "每日快报"
@@ -202,6 +256,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .inbox: "rectangle.stack.fill"
         case .xFeed: "at.circle.fill"
         case .rssFeed: "dot.radiowaves.left.and.right"
+        case .chinaEconomy: "globe.asia.australia.fill"
         case .highValue: "sparkles"
         case .bookmarks: "bookmark.fill"
         case .dailyBrief: "newspaper.fill"
@@ -233,13 +288,16 @@ extension TrackedSource {
     static func sec13F(name: String, role: String, cik: String) -> TrackedSource {
         let digits = cik.filter(\.isNumber)
         let url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=\(digits)&type=13F-HR&owner=exclude&count=40&output=atom"
-        return TrackedSource(
+        var source = TrackedSource(
             name: name,
             role: role,
             topics: ["13F", "持仓", "投资"],
             sourceKind: .sec13F,
             feedURL: url
         )
+        source.groupID = "sec13f-\(digits)"
+        source.groupName = name
+        return source
     }
 
     static func x(
@@ -256,6 +314,7 @@ extension TrackedSource {
             sourceKind: .x,
             feedURL: username.trimmingCharacters(in: CharacterSet(charactersIn: "@"))
         )
+        source.groupName = name
         source.isEnabled = isEnabled
         return source
     }

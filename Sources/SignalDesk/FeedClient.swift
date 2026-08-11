@@ -4,6 +4,7 @@ struct ParsedFeedItem: Equatable {
     var title: String
     var summary: String
     var link: String?
+    var transcriptURL: String?
     var publishedAt: Date
 }
 
@@ -92,10 +93,12 @@ struct FeedClient {
             return SignalEvent(
                 id: "\(source.id.uuidString)|\(identity)",
                 sourceID: source.id,
+                sourceKind: source.sourceKind,
                 sourceName: source.name,
                 title: item.title,
                 summary: item.summary,
                 url: item.link,
+                transcriptURL: item.transcriptURL,
                 publishedAt: item.publishedAt,
                 category: category,
                 importance: score,
@@ -113,13 +116,34 @@ struct FeedClient {
 enum MediaClassifier {
     private static let markers = [
         "interview", "podcast", "keynote", "conversation", "fireside",
-        "q&a", "qa with", "talks with", "in conversation",
-        "访谈", "专访", "采访", "对话", "播客", "演讲", "圆桌", "问答"
+        "q&a", "qa with", "talks with", "in conversation", "video", "webinar",
+        "访谈", "专访", "采访", "对话", "播客", "演讲", "圆桌", "问答", "视频", "直播", "网络研讨会"
+    ]
+    private static let explicitMediaMarkers = [
+        "podcast", "webinar", "livestream", "lecture",
+        "播客", "视频", "直播", "网络研讨会", "讲座"
     ]
 
     static func isLongForm(title: String) -> Bool {
         let lowered = title.lowercased()
         return markers.contains { lowered.contains($0) }
+    }
+
+    static func isMedia(title: String, url: String?) -> Bool {
+        let loweredTitle = title.lowercased()
+        if explicitMediaMarkers.contains(where: loweredTitle.contains) { return true }
+        guard let url, let parsedURL = URL(string: url) else { return false }
+
+        let host = parsedURL.host?.lowercased() ?? ""
+        if [
+            "youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com",
+            "vimeo.com", "www.vimeo.com", "open.spotify.com", "spotify.com",
+            "podcasts.apple.com", "soundcloud.com", "www.soundcloud.com"
+        ].contains(host) {
+            return true
+        }
+
+        return ["mp3", "m4a", "mp4", "webm", "m3u8"].contains(parsedURL.pathExtension.lowercased())
     }
 
     static func matchesPerson(title: String, aliases: [String]) -> Bool {
@@ -270,6 +294,9 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         if isEntry, element == "link", let href = attributeDict["href"], current?.link == nil {
             current?.link = href
         }
+        if element == "transcript", let url = attributeDict["url"], current?.transcriptURL == nil {
+            current?.transcriptURL = url
+        }
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
@@ -299,6 +326,8 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
             if current?.summary.isEmpty == true { current?.summary = clean(text) }
         case "link":
             if !isEntry, !text.isEmpty { current?.link = text }
+        case "transcript":
+            if current?.transcriptURL == nil, !text.isEmpty { current?.transcriptURL = text }
         case "pubdate", "published", "updated", "filing-date":
             if current?.publishedAt == nil { current?.publishedAt = FeedDateParser.date(from: text) }
         case "item", "entry":
@@ -308,6 +337,7 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
                         title: current.title,
                         summary: current.summary,
                         link: current.link,
+                        transcriptURL: current.transcriptURL,
                         publishedAt: current.publishedAt ?? Date()
                     )
                 )
@@ -337,6 +367,7 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         var title = ""
         var summary = ""
         var link: String?
+        var transcriptURL: String?
         var publishedAt: Date?
     }
 }
